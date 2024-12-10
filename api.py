@@ -1,9 +1,11 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request,send_from_directory
 from flask_cors import CORS
 import numpy as np
 import pandas as pd
 import os
 from sklearn.cluster import KMeans
+from numpy import log2 as log
+from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier, export_text
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
@@ -18,7 +20,136 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Đảm bảo thư mục 'uploads' tồn tại
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+eps = np.finfo(float).eps
+
+# ----------------------------- DECISION TREE-----------------------------
+
+#1. Tìm entropy cho cột cuối cùng (cột mục tiêu)
+def find_entropy(df):
+    Class = df.keys()[-1] #danh sách các tên cột
+    entropy = 0
+    values = df[Class].unique()
+    for value in values:
+        fraction = df[Class].value_counts()[value] / len(df[Class])
+        entropy += -(fraction * np.log2(fraction))
+    return entropy
+
+#2.Tính entropy cho từng cột
+def find_entropy_attribute (df, attribute):
+    Class = df.keys()[-1]
+    target_variables = df[Class].unique()
+    variables = df[attribute].unique()
+
+    entropy2= 0
+    for variable in variables:
+        entropy = 0
+        for target_variable  in target_variables:
+            num = len(df[attribute][df[attribute]== variable][df[Class]== target_variable]) #vd cột weather có Sunny,Rain -> đếm số dòng dữ liệu của Weather có Sunny mà Yes và No
+            den = len(df[attribute][df[attribute]== variable]) #đếm số dòng của thuộc tính (tổng dòng dữ liệu của data)
+            fraction = num/(den+eps)
+            entropy += -fraction*log(fraction+eps) #Tính entropy của từng specific values trong cột Weather (ví dụ)
+        fraction2 = den / len(df) #den = tổng số dòng weather là sunny  / len = số dòng dữ liệu của dataset
+        entropy2 += -fraction2*entropy #Tổng entropy của cột Weather = cộng dồn sau mỗi giá trị cụ thể của cột Weather
+
+    return (abs(round(entropy2,4)))
+
+
+#3. Tìm thuộc tính info thấp nhất
+def find_winner (df):
+    Entropy_att = []
+    Inf = []
+
+    for key in df.keys()[:-1]:
+        Inf.append(find_entropy(df)-find_entropy_attribute(df,key)) #Tính information từng attribute rồi thêm vào mảng Inf
+    
+    return df.keys()[:-1][np.argmax(Inf)] #Tìm thuộc tính có info thấp nhất (gain mới lấy cao nhất)
+
+def get_subtable (df,node, value):
+    return df[df[node]== value].reset_index(drop=True) #lọc ra các giá trị của cột được chọn từ hàm find_winner
+
+#4. Xây dựng ây quyết định
+def build_tree (df, tree = None):
+    Class = df.keys()[-1]
+
+    #Tìm node
+    node = find_winner(df)
+
+    #Lấy ra những giá trị của cột node
+    att_value = np.unique(df[node])
+
+    #Tạo dic rỗng để tạo cây
+    if tree is None:
+        tree = {}
+        tree[node] = {}
+
+    #Tạo vòng lặp -> gọi đệ quy
+    for value in att_value:
+
+        subtable = get_subtable(df,node,value)
+        clValue, counts = np.unique(subtable[Class], return_counts = True)
+
+        if len(counts) == 1:
+            tree[node][value] = clValue[0]
+        else:
+            tree[node][value] = build_tree(subtable)
+
+    return tree
+
+#5. Vẽ cây
+import pydot
+import uuid
+def generate_unique_node():
+    """ Generate a unique node label"""
+    return str(uuid.uuid1())
+
+def create_node (graph, label, shape = 'oval'):
+    node = pydot.Node(generate_unique_node(), label = label, shape = shape)
+    graph.add_node(node)
+    return node
+
+def create_edge(graph, node_parent, node_child, label):
+    link = pydot.Edge(node_parent,node_child, label = label)
+    graph.add_edge(link)
+    return link
+
+def walk_tree (graph, dictionary, prev_node = None):
+    """Recursive construction of a decision tree stored as a dictionary"""
+
+    for parent, child in dictionary.items():
+        #root
+        if not prev_node:
+            root = create_node(graph,parent)
+            walk_tree(graph,child,root)
+            continue
+
+        #node
+        if isinstance(child, dict):
+            for p,c  in child.items():
+                n = create_node(graph,p)
+                create_edge(graph, prev_node, n, str(parent))
+                walk_tree(graph,c,n)
+
+        #leaf
+        else:
+            leaf = create_node(graph, str(child), shape='box')
+            create_edge(graph, prev_node, leaf, str(parent))
+
+
+def plot_tree (dictionary, filename):
+    graph = pydot.Dot(graph_type = 'graph')
+    walk_tree(graph, dictionary)
+    graph.write_png(filename)
+
+    return filename
+
+@app.route('uploads/<path:filename>', methods=['GET'])
+def serve_uploaded_file(filename):
+    """Phục vụ tệp hình ảnh từ thư mục uploads"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    
+# -----------------------------------DECISION TREE ----------------------------------------------
 @app.route('/run_decision_tree', methods=['POST'])
+
 def run_decision_tree():
     # Kiểm tra file được upload 
     if 'file' not in request.files:
@@ -44,44 +175,101 @@ def run_decision_tree():
     if data.shape[1] < 2:
         return jsonify({"error": "Dataset must have at least 2 columns"}), 400
     
-    # Tách dữ liệu thành đầu vào (features) và đầu ra (label)
-    X = data.iloc[:, :-1].values  # Tất cả các cột trừ cột cuối
-    y = data.iloc[:, -1].values  # Cột cuối cùng là label
+    tree = build_tree(data) 
+ 
+    # Vẽ cây quyết định và lấy tên file hình ảnh
+    filename = os.path.join(app.config['UPLOAD_FOLDER'], "DecisionTree3.png")
+    image_file = plot_tree(tree, filename=filename)
 
-    # Chia dữ liệu thành tập huấn luyện và kiểm tra
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-
-    # Tạo mô hình Decision Tree và huấn luyện
-    clf = DecisionTreeClassifier(random_state=42)
-    clf.fit(X_train, y_train)
-
-    # Dự đoán và tính độ chính xác
-    y_pred = clf.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-
-    # Xuất cấu trúc cây quyết định dưới dạng văn bản
-    tree_structure = export_text(clf, feature_names=data.columns[:-1].tolist())
-
-    # Trả về kết quả
     result = {
-        "accuracy": accuracy,
-        "tree_structure": tree_structure
+         "image_file": image_file,
     }
     return jsonify(result)
 
+# -----------------------------------------Gom cụm----------------------------------------------------------------------
+# Khởi tạo lớp KMeans
+class KMeans:
+    def __init__(self, n_clusters=3, max_iters=100):
+        self.n_clusters = n_clusters
+        self.max_iters = max_iters
+        self.centroids = None
+        self.labels = None
+
+    def initialize_random_clusters(self, X):
+        # Chọn ngẫu nhiên các chỉ số điểm dữ liệu để làm centroid ban đầu
+        random_indices = np.random.choice(X.shape[0], size=self.n_clusters, replace=False)
+        
+        # Các cụm ban đầu, mỗi cụm sẽ chứa các điểm dữ liệu tương ứng
+        initial_clusters = {i: [] for i in range(self.n_clusters)}
+        
+        # Gán các điểm dữ liệu vào các cụm ngẫu nhiên
+        for idx in range(X.shape[0]):
+            cluster_id = np.random.choice(self.n_clusters)  # Chọn ngẫu nhiên một cụm
+            initial_clusters[cluster_id].append(idx)  # Gán điểm dữ liệu vào cụm
+        
+
+        # Tính toán centroid ban đầu từ các điểm trong mỗi cụm
+        self.centroids = np.zeros((self.n_clusters, X.shape[1]))
+        for cluster_id, indices in initial_clusters.items():
+            if indices:  # Kiểm tra xem cụm có điểm dữ liệu không
+                cluster_points = X[indices]
+                self.centroids[cluster_id] = np.mean(cluster_points, axis=0)
+        
+        #  Làm tròn centroids
+        self.centroids = np.round(self.centroids, decimals=4)
+        
+        # Gán nhãn ban đầu cho tất cả các điểm dữ liệu
+        self.labels = np.zeros(X.shape[0], dtype=int)
+        for cluster_id, indices in initial_clusters.items():
+            for idx in indices:
+                self.labels[idx] = cluster_id
+        
+        return self.labels, self.centroids
+
+    def fit(self, X):
+        for iteration in range(self.max_iters):
+            old_centroids = self.centroids.copy()
+            old_labels = self.labels.copy()
+
+            # Tính toán khoảng cách từ mỗi điểm đến các centroid
+            distances = np.zeros((X.shape[0], self.n_clusters))  # Ma trận khoảng cách
+            for i in range(self.n_clusters):
+                # Tính khoảng cách Euclidean giữa điểm và centroid i
+                distances[:, i] = np.linalg.norm(X - self.centroids[i], axis=1)
+            
+            # Gán nhãn cho các điểm dữ liệu theo centroid gần nhất
+            self.labels = np.argmin(distances, axis=1)
+            
+            # Cập nhật lại centroid cho mỗi cụm
+            for k in range(self.n_clusters):
+                # Lấy các điểm thuộc cụm k
+                cluster_points = X[self.labels == k]
+                if len(cluster_points) > 0:
+                    self.centroids[k] = np.mean(cluster_points, axis=0)
+            
+            # Làm tròn toàn bộ centroids
+            self.centroids = np.round(self.centroids, decimals=2)
+            
+            # Kiểm tra nếu centroids không thay đổi
+            if np.all(old_centroids == self.centroids):
+                break
+        
+        return self.centroids, self.labels
+
 @app.route('/run_clustering', methods=['POST'])
 def run_clustering():
-    # Kiểm tra file được upload 
+    # Kiểm tra file được upload
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
-    
+
     file = request.files['file']
 
     # Kiểm tra định dạng file
     if not file.filename.endswith('.csv'):
-        return ({"error": "Invalid file format, please input a .csv file"}), 400
-    
-    # Lưu file tạm thời 
+        return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
+
+    # Lưu file tạm thời
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
     file.save(file_path)
 
@@ -90,27 +278,48 @@ def run_clustering():
         data = pd.read_csv(file_path)
     except Exception as e:
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
-    
-    # Kiểm tra dữ liệu đầu vào 
+
+    # Kiểm tra dữ liệu đầu vào
     if data.shape[1] < 2:
         return jsonify({"error": "Dataset must have at least 2 columns"}), 400
-    
-    # Example: Lấy 2 cột đầu tiên để gom cụm
-    X = data.iloc[:, :2]
 
-    # Áp dụng thuật toán K-Means clustering
-    kmeans = KMeans(n_clusters=2, random_state=0)
-    kmeans.fit(X)
-    
-    # Trả về kết quả
-    clusters = kmeans.labels_.tolist()
-    cluster_centers = kmeans.cluster_centers_.tolist()
+    # Mã hóa dữ liệu phân loại
+    le = LabelEncoder()
+    df_encoded = data.copy()
+    for col in df_encoded.select_dtypes(include=['object', 'category']).columns:
+        df_encoded[col] = le.fit_transform(df_encoded[col])
+
+    # Kiểm tra số cột sau mã hóa
+    if df_encoded.shape[1] < 3:
+        return jsonify({"error": "Dataset must have at least 3 columns after encoding"}), 400
+
+    # Lấy 3 thuộc tính đầu tiên để chạy K-Means
+    data_for_clustering = df_encoded.iloc[:, :3].to_numpy()
+
+    # Khởi tạo KMeans
+    kmeans = KMeans(n_clusters=3)
+    try:
+        initial_labels, initial_centroids = kmeans.initialize_random_clusters(data_for_clustering)
+        centroids, labels = kmeans.fit(data_for_clustering)
+    except Exception as e:
+        return jsonify({"error": f"Clustering failed: {str(e)}"}), 500
+
+  # Nhóm các điểm theo cụm
+    clusters = {i: [] for i in range(kmeans.n_clusters)}
+    for idx, cluster_id in enumerate(labels):
+        clusters[cluster_id].append(idx)
+
+    # Chuẩn bị kết quả trả về dạng JSON
     result = {
         "clusters": clusters,
-        "cluster_centers": cluster_centers,
-        "n_clusters": len(cluster_centers)
+        "centroids": centroids.tolist(),
+        "initial_centroids": initial_centroids.tolist(),
+        "initial_labels": initial_labels.tolist(),
+        "final_labels": labels.tolist(),
     }
     return jsonify(result)
+
+# -----------------------------------------------------------------------------------------
 
 class NaiveBayesClassifier:
     def __init__(self, smoothing=False):
