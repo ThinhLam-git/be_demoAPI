@@ -142,7 +142,7 @@ def plot_tree (dictionary, filename):
 
     return filename
 
-@app.route('uploads/<path:filename>', methods=['GET'])
+@app.route('/uploads/<path:filename>', methods=['GET'])
 def serve_uploaded_file(filename):
     """Phục vụ tệp hình ảnh từ thư mục uploads"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
