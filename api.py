@@ -149,7 +149,6 @@ def serve_uploaded_file(filename):
     
 # -----------------------------------DECISION TREE ----------------------------------------------
 @app.route('/run_decision_tree', methods=['POST'])
-
 def run_decision_tree():
     # Kiểm tra file được upload 
     if 'file' not in request.files:
@@ -548,10 +547,6 @@ def naive_bayes_with_smoothing():
     }
     return jsonify(result)
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
-    app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
-
 #----------------------------------------------------------------------------
 # Function to calculate support
 def calculate_support(transactions, itemsets):
@@ -660,5 +655,5 @@ def association_rules():
     })
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5501))  # Render tự động thiết lập cổng
+    port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
     app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
