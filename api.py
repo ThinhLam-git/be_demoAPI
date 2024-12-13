@@ -142,7 +142,7 @@ def plot_tree (dictionary, filename):
 
     return filename
 
-@app.route('uploads/<path:filename>', methods=['GET'])
+@app.route('/uploads/<path:filename>', methods=['GET'])
 def serve_uploaded_file(filename):
     """Phục vụ tệp hình ảnh từ thư mục uploads"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -635,25 +635,29 @@ def association_rules():
     file.save(file_path)
 
     try:
+        # Đọc dữ liệu từ tệp CSV
         data = pd.read_csv(file_path, header=None)
         transactions = data.applymap(str).values.tolist()
     except Exception as e:
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
 
-    # Get parameters
+    # Lấy tham số từ người dùng
     min_support = float(request.form.get('min_support', 0.5))
     min_confidence = float(request.form.get('min_confidence', 0.7))
 
-    # Generate frequent itemsets and rules
+    # Tạo các tập mục phổ biến và luật kết hợp
     frequent_itemsets = apriori(transactions, min_support)
     rules = generate_rules(frequent_itemsets, transactions, min_confidence)
 
-    # Return results
+    # Trả về kết quả
     return jsonify({
         "frequent_itemsets": frequent_itemsets,
-        "rules": rules
+        "rules": [
+            {"antecedent": antecedent, "consequent": consequent, "confidence": confidence}
+            for antecedent, consequent, confidence in rules
+        ]
     })
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
+    app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
