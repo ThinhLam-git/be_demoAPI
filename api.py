@@ -637,13 +637,17 @@ def association_rules():
     try:
         # Đọc dữ liệu từ tệp CSV
         data = pd.read_csv(file_path, header=None)
-        transactions = data.applymap(str).values.tolist()
+        transactions = data.applymap(str).fillna('').values.tolist()
+        transactions = [[item for item in transaction if item] for transaction in transactions]
     except Exception as e:
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
 
     # Lấy tham số từ người dùng
-    min_support = float(request.form.get('min_support', 0.5))
-    min_confidence = float(request.form.get('min_confidence', 0.7))
+    try:
+        min_support = float(request.form.get('min_support', 0.5))
+        min_confidence = float(request.form.get('min_confidence', 0.7))
+    except ValueError:
+        return jsonify({"error": "Invalid parameters for min_support or min_confidence"}), 400
 
     # Tạo các tập mục phổ biến và luật kết hợp
     frequent_itemsets = apriori(transactions, min_support)
@@ -652,12 +656,9 @@ def association_rules():
     # Trả về kết quả
     return jsonify({
         "frequent_itemsets": frequent_itemsets,
-        "rules": [
-            {"antecedent": antecedent, "consequent": consequent, "confidence": confidence}
-            for antecedent, consequent, confidence in rules
-        ]
+        "rules": rules
     })
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
+    port = int(os.environ.get('PORT', 5501))  # Render tự động thiết lập cổng
     app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
