@@ -551,3 +551,109 @@ def naive_bayes_with_smoothing():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
     app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
+
+#----------------------------------------------------------------------------
+# Function to calculate support
+def calculate_support(transactions, itemsets):
+    support_count = {}
+    for itemset in itemsets:
+        count = 0
+        for transaction in transactions:
+            if all(item in transaction for item in itemset):
+                count += 1
+        support_count[tuple(itemset)] = count
+    return support_count
+
+# Function to generate combinations manually
+def generate_combinations(items, length):
+    combinations = []
+    n = len(items)
+    def combine(current, start):
+        if len(current) == length:
+            combinations.append(current)
+            return
+        for i in range(start, n):
+            combine(current + [items[i]], i + 1)
+    combine([], 0)
+    return combinations
+
+# Generate frequent itemsets
+def apriori(transactions, min_support):
+    single_items = list(set(item for transaction in transactions for item in transaction))
+    current_itemsets = [[item] for item in single_items]
+    frequent_itemsets = []
+
+    while current_itemsets:
+        # Calculate support
+        support = calculate_support(transactions, current_itemsets)
+        # Filter based on minimum support
+        current_itemsets = [
+            list(itemset) for itemset, count in support.items()
+            if count / len(transactions) >= min_support
+        ]
+        frequent_itemsets.extend(current_itemsets)
+        # Generate next level combinations
+        current_itemsets = generate_combinations(
+            sorted(set(item for subset in current_itemsets for item in subset)),
+            len(current_itemsets[0]) + 1
+        ) if current_itemsets else []
+    return frequent_itemsets
+
+# Generate rules manually
+def generate_rules(frequent_itemsets, transactions, min_confidence):
+    rules = []
+    for itemset in frequent_itemsets:
+        if len(itemset) < 2:
+            continue
+        for i in range(1, len(itemset)):
+            subsets = generate_combinations(itemset, i)
+            for subset in subsets:
+                remainder = [item for item in itemset if item not in subset]
+                if remainder:
+                    support_itemset = calculate_support(transactions, [itemset])[tuple(itemset)]
+                    support_subset = calculate_support(transactions, [subset])[tuple(subset)]
+                    confidence = support_itemset / support_subset
+                    if confidence >= min_confidence:
+                        rules.append({
+                            "antecedent": subset,
+                            "consequent": remainder,
+                            "confidence": confidence
+                        })
+    return rules
+
+@app.route('/association_rules', methods=['POST'])
+def association_rules():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+
+    if not file.filename.endswith('.csv'):
+        return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    file.save(file_path)
+
+    try:
+        data = pd.read_csv(file_path, header=None)
+        transactions = data.applymap(str).values.tolist()
+    except Exception as e:
+        return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
+
+    # Get parameters
+    min_support = float(request.form.get('min_support', 0.5))
+    min_confidence = float(request.form.get('min_confidence', 0.7))
+
+    # Generate frequent itemsets and rules
+    frequent_itemsets = apriori(transactions, min_support)
+    rules = generate_rules(frequent_itemsets, transactions, min_confidence)
+
+    # Return results
+    return jsonify({
+        "frequent_itemsets": frequent_itemsets,
+        "rules": rules
+    })
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)
