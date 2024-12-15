@@ -280,6 +280,80 @@ def find_association_rules():
         "frequent_itemsets": [list(itemset) for itemset in frequent_itemsets],
         "rules": formatted_rules
     })
+# -----------------------------------------Do tuong quan ----------------------------------------------
+
+# Ham tinh gia tri trung binh
+def mean(values):
+    """Tính giá trị trung bình."""
+    return sum(values) / len(values)
+
+# Hàm tính hệ số tương quan Pearson
+def pearson_correlation(x, y):
+    """
+    Tính hệ số tương quan Pearson giữa hai danh sách số liệu x và y.
+    Điều kiện: x và y phải có cùng độ dài.
+    """
+    if len(x) != len(y):
+        raise ValueError("Hai danh sách x và y phải có cùng độ dài.")
+
+    n = len(x)
+    mean_x = mean(x)
+    mean_y = mean(y)
+
+    # Tính các thành phần của công thức
+    numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
+    denominator_x = sum((x[i] - mean_x) ** 2 for i in range(n))
+    denominator_y = sum((y[i] - mean_y) ** 2 for i in range(n))
+    denominator = (denominator_x * denominator_y) ** 0.5
+
+    if denominator == 0:
+        return 0  # Trường hợp đặc biệt: nếu biến x hoặc y không thay đổi.
+
+    return numerator / denominator
+
+# Hàm diễn giải hệ số tương quan
+def interpret_correlation(r):
+    """
+    Đưa ra kết luận dựa trên hệ số tương quan Pearson.
+    """
+    if r == 1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo và cùng chiều."
+    elif r == -1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo nhưng ngược chiều."
+    elif 0.7 <= r < 1:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ và cùng chiều."
+    elif -1 < r <= -0.7:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ nhưng ngược chiều."
+    elif 0.3 <= r < 0.7:
+        return "Hai biến có mối quan hệ tuyến tính trung bình và cùng chiều."
+    elif -0.7 < r <= -0.3:
+        return "Hai biến có mối quan hệ tuyến tính trung bình nhưng ngược chiều."
+    elif -0.3 < r < 0.3:
+        return "Hai biến có rất ít hoặc không có mối quan hệ tuyến tính."
+    else:
+        return "Mối quan hệ giữa hai biến không rõ ràng."
+
+@app.route('/pearson_correlation', methods=['POST'])
+def calculate_pearson():
+    data = request.get_json()
+
+    if 'x' not in data or 'y' not in data:
+        return jsonify({"error": "Thiếu danh sách x hoặc y trong dữ liệu đầu vào."}), 400
+
+    x = data['x']
+    y = data['y']
+
+    try:
+        r = pearson_correlation(x, y)
+        interpretation = interpret_correlation(r)
+        return jsonify({
+            "pearson_correlation": r,
+            "interpretation": interpretation
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Có lỗi xảy ra: {str(e)}"}), 500
 # -----------------------------------------Gom cụm----------------------------------------------------------------------
 # Khởi tạo lớp KMeans
 class KMeans:
