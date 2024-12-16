@@ -395,6 +395,8 @@ class KMeans:
         return self.labels, self.centroids
 
     def fit(self, X):
+        iteration_result = []
+
         for iteration in range(self.max_iters):
             old_centroids = self.centroids.copy()
             old_labels = self.labels.copy()
@@ -417,12 +419,19 @@ class KMeans:
             
             # Làm tròn toàn bộ centroids
             self.centroids = np.round(self.centroids, decimals=2)
+
+            iteration_result.append({
+            "iteration": iteration + 1,
+            "labels": self.labels.tolist(),  # Chuyển labels thành list
+            "centroids": self.centroids.tolist() 
+            })
+            
             
             # Kiểm tra nếu centroids không thay đổi
             if np.all(old_centroids == self.centroids):
                 break
         
-        return self.centroids, self.labels
+        return iteration_result,self.centroids, self.labels
 
 @app.route('/run_clustering', methods=['POST'])
 def run_clustering():
@@ -468,7 +477,7 @@ def run_clustering():
     kmeans = KMeans(n_clusters=3)
     try:
         initial_labels, initial_centroids = kmeans.initialize_random_clusters(data_for_clustering)
-        centroids, labels = kmeans.fit(data_for_clustering)
+        iteration_result,centroids, labels = kmeans.fit(data_for_clustering)
     except Exception as e:
         return jsonify({"error": f"Clustering failed: {str(e)}"}), 500
 
@@ -483,7 +492,7 @@ def run_clustering():
         "centroids": centroids.tolist(),
         "initial_centroids": initial_centroids.tolist(),
         "initial_labels": initial_labels.tolist(),
-        "final_labels": labels.tolist(),
+        "final": iteration_result
     }
     return jsonify(result)
 
