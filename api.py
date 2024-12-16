@@ -10,6 +10,7 @@ from sklearn.tree import DecisionTreeClassifier, export_text
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 import math
+import logging
 
 app = Flask(__name__)
 CORS(app)  # Cho phép tất cả các nguồn gốc (origin)
@@ -616,44 +617,77 @@ def generate_rules(frequent_itemsets, transactions, min_confidence):
                         })
     return rules
 
+logging.basicConfig(level=logging.DEBUG,  # Log everything from DEBUG level and above
+                    format='%(asctime)s [%(levelname)s] %(message)s',
+                    handlers=[
+                        logging.FileHandler("app.log"),  # Log to file
+                        logging.StreamHandler()         # Log to console
+                    ])
 @app.route('/association_rules', methods=['POST'])
 def association_rules():
+    logging.info("Received request at /association_rules")
+
     if 'file' not in request.files:
+        logging.warning("No file part in the request")
         return jsonify({"error": "No file part"}), 400
 
     file = request.files['file']
 
     if not file.filename.endswith('.csv'):
+        logging.warning("Invalid file format: %s", file.filename)
         return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
 
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-    file.save(file_path)
+    try:
+        file.save(file_path)
+        logging.info("File saved successfully at %s", file_path)
+    except Exception as e:
+        logging.error("Failed to save file: %s", str(e))
+        return jsonify({"error": f"Failed to save file: {str(e)}"}), 500
 
     try:
-        # Đọc dữ liệu từ tệp CSV
-        data = pd.read_csv(file_path, header=None)
+        # Read data from CSV file
+        data = pd.read_csv(file_path)
         transactions = data.applymap(str).fillna('').values.tolist()
         transactions = [[item for item in transaction if item] for transaction in transactions]
+        logging.info("File processed successfully")
     except Exception as e:
+        logging.error("Failed to read or process file: %s", str(e))
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
 
-    # Lấy tham số từ người dùng
+    # Get parameters from user input
     try:
         min_support = float(request.form.get('min_support', 0.5))
         min_confidence = float(request.form.get('min_confidence', 0.7))
+        logging.info("Parameters received: min_support=%f, min_confidence=%f", min_support, min_confidence)
     except ValueError:
+        logging.error("Invalid parameters for min_support or min_confidence")
         return jsonify({"error": "Invalid parameters for min_support or min_confidence"}), 400
 
-    # Tạo các tập mục phổ biến và luật kết hợp
-    frequent_itemsets = apriori(transactions, min_support)
-    rules = generate_rules(frequent_itemsets, transactions, min_confidence)
+    try:
+        # Generate frequent itemsets and association rules
+        frequent_itemsets = apriori(transactions, min_support)
+        rules = generate_rules(frequent_itemsets, transactions, min_confidence)
+        logging.info("Apriori algorithm executed successfully")
+    except Exception as e:
+        logging.error("Error during Apriori algorithm execution: %s", str(e))
+        return jsonify({"error": f"Error generating association rules: {str(e)}"}), 500
 
-    # Trả về kết quả
-    return jsonify({
+    result = {
         "frequent_itemsets": frequent_itemsets,
         "rules": rules
-    })
+    }
+    logging.info("Results generated successfully")
+    
+    # Return results
+    return jsonify(result)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    logging.warning("404 error: %s", str(e))
+    return jsonify({"error": "Endpoint not found"}), 404
+
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))  # Render tự động thiết lập cổng
-    app.run(debug=True, host='0.0.0.0', port=port)  # Flask sẽ lắng nghe trên cổng do Render cung cấp
+    port = int(os.environ.get('PORT', 5000))   #Render tự động thiết lập cổng
+    app.run(debug=True, host='0.0.0.0', port=port)  
