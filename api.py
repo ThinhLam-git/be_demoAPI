@@ -649,6 +649,41 @@ logging.basicConfig(level=logging.DEBUG,  # Log everything from DEBUG level and 
                         logging.StreamHandler()         # Log to console
                     ])
 
+def calculate_support(transactions, itemset):
+    count = sum(1 for transaction in transactions if itemset.issubset(transaction))
+    return count / len(transactions)
+
+# Hàm sinh tập phổ biến tối đại
+def find_frequent_itemsets(transactions, minsup):
+    items = {item for transaction in transactions for item in transaction}
+    level_1 = [{item} for item in items if calculate_support(transactions, {item}) >= minsup]
+    frequent_itemsets = [set(itemset) for itemset in level_1]
+    all_frequent = [frequent_itemsets]
+
+    k = 2
+    while True:
+        candidates = []
+        previous_level = all_frequent[-1]
+        for i in range(len(previous_level)):
+            for j in range(i + 1, len(previous_level)):
+                union_set = previous_level[i] | previous_level[j]
+                if len(union_set) == k and union_set not in candidates:
+                    candidates.append(union_set)
+                    # Lọc tập phổ biến
+        current_level = [c for c in candidates if calculate_support(transactions, c) >= minsup]
+        if not current_level:
+            break
+        all_frequent.append(current_level)
+        frequent_itemsets.extend(current_level)
+        k += 1
+        
+# Lọc tập phổ biến tối đại
+    maximal_itemsets = []
+    for itemset in frequent_itemsets:
+        if not any(itemset < other for other in frequent_itemsets): # Kiểm tra không có tập cha nào phổ biến hơn
+            maximal_itemsets.append(itemset)
+    return maximal_itemsets
+
 @app.route('/association_rules', methods=['POST'])
 def association_rules():
     logging.info("Received request at /association_rules")
@@ -776,6 +811,55 @@ def generate_combinations(items, length):
     combine([], 0)
     return combinations
 
+def discernibility_matrix(data):
+    """Tạo ma trận phân biệt."""
+    n = len(data)
+    attributes = list(data.columns[:-1])  # Loại bỏ cột quyết định
+    matrix = [[set() for _ in range(n)] for _ in range(n)]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            diff_attributes = {
+                attr
+                for attr in attributes
+                if data.iloc[i][attr] != data.iloc[j][attr]
+            }
+            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
+                matrix[i][j] = diff_attributes
+    return matrix
+
+
+def reducts_from_matrix(matrix, attributes):
+    """Tìm reducts từ ma trận phân biệt."""
+    formulas = set()
+    for row in matrix:
+        for cell in row:
+            if cell:
+                formulas.add(tuple(sorted(cell)))
+
+    reducts = []
+    for size in range(1, len(attributes) + 1):
+        for combination in generate_combinations(attributes, size):
+            if all(any(set(combination) >= set(term) for term in formulas) for term in formulas):
+                reducts.append(set(combination))
+    return reducts
+
+
+def generate_rules(data, reduct):
+    """Sinh các luật dựa trên reduct."""
+    rules = []
+    decision_col = data.columns[-1]
+
+    for _, group in data.groupby(list(reduct)):
+        decisions = group[decision_col].unique()
+        if len(decisions) == 1:  # Chỉ tạo luật nếu quyết định duy nhất
+            condition = " AND ".join(
+                f"{col}={group.iloc[0][col]}" for col in reduct
+            )
+            rule = f"IF {condition} THEN {decision_col}={decisions[0]}"
+            rules.append(rule)
+    return rules
+
 def indiscernibility_relation(data, attributes):
     """Calculate indiscernibility relation for given attributes."""
     groups = data.groupby(attributes).groups
@@ -801,30 +885,31 @@ def rough_accuracy(lower, upper):
     """Calculate the accuracy of a rough set."""
     return len(lower) / len(upper) if len(upper) > 0 else 0
 
-@app.route('/combined', methods=['POST'])
-def combined():
+@app.route('/rough-set', methods=['POST'])
+def rough_set():
     try:
-        # Kiểm tra và xác thực dữ liệu JSON đầu vào
-        data = request.json
-        if 'dataset' not in data or not isinstance(data['dataset'], list):
-            return jsonify({'error': "Invalid or missing 'dataset' in the request."}), 400
+        # Kiểm tra xem file có được tải lên không
+        if 'file' not in request.files:
+            return jsonify({'error': "No file uploaded."}), 400
 
-        dataset = pd.DataFrame(data['dataset'])
-        target = set(data.get('target', []))
-        attributes = data.get('attributes', list(dataset.columns[:-1]))
+        file = request.files['file']
+        if not file.filename.endswith('.csv'):
+            return jsonify({'error': "Invalid file type. Please upload a CSV file."}), 400
 
-        # Kiểm tra các thuộc tính có tồn tại trong dataset
-        missing_attributes = [attr for attr in attributes if attr not in dataset.columns]
-        if missing_attributes:
-            return jsonify({'error': f"Missing attributes in dataset: {missing_attributes}"}), 400
+        # Đọc file CSV thành DataFrame
+        dataset = pd.read_csv(file)
+        attributes = list(dataset.columns[:-1])  # Mặc định các thuộc tính
+        target_class = dataset[dataset.columns[-1]].unique()  # Các lớp quyết định
 
-        # Rough Set calculations
+        # Tính toán tập thô
         ind_relation = indiscernibility_relation(dataset, attributes)
-        lower = lower_approximation(dataset, target, ind_relation) if target else []
-        upper = upper_approximation(dataset, target, ind_relation) if target else []
-        accuracy = rough_accuracy(lower, upper) if target else None
+        lower = {cls: lower_approximation(dataset, set(dataset[dataset.columns[-1]] == cls).index, ind_relation)
+                 for cls in target_class}
+        upper = {cls: upper_approximation(dataset, set(dataset[dataset.columns[-1]] == cls).index, ind_relation)
+                 for cls in target_class}
+        accuracy = {cls: rough_accuracy(lower[cls], upper[cls]) for cls in target_class}
 
-        # Discernibility Matrix and Reducts
+        # Tính reducts và sinh luật
         matrix = discernibility_matrix(dataset)
         reducts = reducts_from_matrix(matrix, attributes)
         all_rules = {}
@@ -835,24 +920,19 @@ def combined():
         return jsonify({
             'rough_set': {
                 'indiscernibility_relation': ind_relation,
-                'lower_approximation': lower,
-                'upper_approximation': upper,
+                'lower_approximation': {cls: list(indices) for cls, indices in lower.items()},
+                'upper_approximation': {cls: list(indices) for cls, indices in upper.items()},
                 'accuracy': accuracy
             },
-            'discernibility': {
-                'discernibility_matrix': "Matrix too large to display" if len(matrix) > 100 else matrix,
+            'reducts_and_rules': {
                 'reducts': [list(reduct) for reduct in reducts],
                 'rules': all_rules
             }
         })
 
-    except KeyError as e:
-        return jsonify({'error': f"Missing key: {str(e)}"}), 400
-    except ValueError as e:
-        return jsonify({'error': f"Value error: {str(e)}"}), 400
     except Exception as e:
         return jsonify({'error': f"An unexpected error occurred: {str(e)}"}), 500
-
+    
 @app.errorhandler(404)
 def page_not_found(e):
     logging.warning("404 error: %s", str(e))
