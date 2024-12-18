@@ -328,7 +328,7 @@ def run_clustering():
     }
     return jsonify(result)
 
-# -----------------------------------------------------------------------------------------
+# -------------------------------------------NAIVE BAYES----------------------------------------------
 
 class NaiveBayesClassifier:
     def __init__(self, smoothing=False):
@@ -338,62 +338,69 @@ class NaiveBayesClassifier:
         self.smoothing = smoothing
 
     def fit(self, X, y):
-        # Xác định các lớp
         self.classes = np.unique(y)
         n_samples, n_features = X.shape
 
         # Tính xác suất của mỗi lớp
         self.class_probs = {}
+        step_details = {'class_probs': {}, 'feature_probs': {}}
         for cls in self.classes:
             self.class_probs[cls] = np.sum(y == cls) / n_samples
+            step_details['class_probs'][cls] = self.class_probs[cls]
 
         # Tính xác suất của các đặc trưng cho mỗi lớp
         self.feature_probs = {}
         for cls in self.classes:
             X_cls = X[y == cls]
-            
-            # Khởi tạo từng đặc trưng
             cls_feature_probs = []
+            feature_details = []
+
             for feature_idx in range(n_features):
                 feature_values = X_cls[:, feature_idx]
                 unique_values = np.unique(feature_values)
-                
-                # Xác suất của từng giá trị đặc trưng
+
                 value_probs = {}
+                value_details = {}
                 for val in unique_values:
-                    if self.smoothing:  # Làm trơn Laplace
+                    if self.smoothing:
                         count = np.sum((feature_values == val)) + 1
                         total = len(feature_values) + len(unique_values)
-                    else:  # Không làm trơn
+                    else:
                         count = np.sum((feature_values == val))
                         total = len(feature_values)
-                    
-                    value_probs[val] = count / total
-                
+
+                    prob = count / total
+                    value_probs[val] = prob
+                    value_details[val] = {'count': count, 'total': total, 'prob': prob}
+
                 cls_feature_probs.append(value_probs)
-            
+                feature_details.append(value_details)
+
             self.feature_probs[cls] = cls_feature_probs
+            step_details['feature_probs'][cls] = feature_details
+
+        return step_details
 
     def predict(self, X):
         predictions = []
+        prediction_details = []
         for sample in X:
-            # Tính xác suất cho từng lớp
             class_scores = {}
+            sample_details = {'features': sample.tolist(), 'scores': {}}
+
             for cls in self.classes:
-                # Bắt đầu với log xác suất của lớp  
                 score = math.log(self.class_probs[cls])
-                
-                # Cộng log xác suất của từng đặc trưng
                 for feature_idx, feature_val in enumerate(sample):
                     feature_prob = self.feature_probs[cls][feature_idx].get(feature_val, 1e-10)
                     score += math.log(feature_prob)
-                
+
                 class_scores[cls] = score
-            
-            # Chọn lớp có điểm số cao nhất
+                sample_details['scores'][cls] = score
+
             predictions.append(max(class_scores, key=class_scores.get))
-        
-        return np.array(predictions)
+            prediction_details.append(sample_details)
+
+        return np.array(predictions), prediction_details
 
 def calculate_confusion_matrix(y_true, y_pred, classes):
     """Tính ma trận nhầm lẫn"""
@@ -477,8 +484,8 @@ def naive_bayes_no_smoothing():
 
     # Thuật toán Naive Bayes không làm trơn Laplace
     nb_classifier = NaiveBayesClassifier(smoothing=False)
-    nb_classifier.fit(X_train, y_train)
-    y_pred = nb_classifier.predict(X_test)
+    fit_details = nb_classifier.fit(X_train, y_train)
+    y_pred, predict_details = nb_classifier.predict(X_test)
     
     # Tính toán các độ đo
     classes = np.unique(y)
@@ -493,6 +500,8 @@ def naive_bayes_no_smoothing():
         "accuracy": accuracy,
         "confusion_matrix": confusion_matrix,
         "class_metrics": metrics,
+        "fit_details": fit_details,
+        "predict_details": predict_details,
         "classes": classes.tolist()
     }
     return jsonify(result)
@@ -537,8 +546,8 @@ def naive_bayes_with_smoothing():
 
     # Thuật toán Naive Bayes có làm trơn Laplace
     nb_classifier = NaiveBayesClassifier(smoothing=True)
-    nb_classifier.fit(X_train, y_train)
-    y_pred = nb_classifier.predict(X_test)
+    fit_details = nb_classifier.fit(X_train, y_train)
+    y_pred, predict_details = nb_classifier.predict(X_test)
     
     # Tính toán các độ đo
     classes = np.unique(y)
@@ -553,6 +562,8 @@ def naive_bayes_with_smoothing():
         "accuracy": accuracy,
         "confusion_matrix": confusion_matrix,
         "class_metrics": metrics,
+        "fit_details": fit_details,
+        "predict_details": predict_details,
         "classes": classes.tolist()
     }
     return jsonify(result)
