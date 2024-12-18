@@ -749,6 +749,14 @@ def association_rules():
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
 
     # Get parameters from user input
+     try:
+        min_support = float(request.form.get('min_support', 0.5))
+        min_confidence = float(request.form.get('min_confidence', 0.7))
+        logging.info("Parameters received: min_support=%f, min_confidence=%f", min_support, min_confidence)
+    except ValueError:
+        logging.error("Invalid parameters for min_support or min_confidence")
+        return jsonify({"error": "Invalid parameters for min_support or min_confidence"}), 400
+        
     try:
         # Sinh tập phổ biến tối đại và luật kết hợp
         maximal_itemsets = find_frequent_itemsets(transactions, min_support)
@@ -780,7 +788,117 @@ def association_rules():
     
     # Return results
     return jsonify(result)
+#-----------------------------do tuong quan--------------------------------
+    def read_csv(file_path):
+    """
+    Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
+    Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
+    """
+    x = []
+    y = []
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        next(reader)  # Bỏ qua dòng tiêu đề, nếu có
+        for row in reader:
+            if len(row) >= 2:  # Đảm bảo có ít nhất 2 cột
+                x.append(float(row[0].strip()))
+                y.append(float(row[1].strip()))
+    return x, y
 
+def mean(values):
+    """Tính giá trị trung bình."""
+    return sum(values) / len(values)
+
+def pearson_correlation(x, y):
+    """
+    Tính hệ số tương quan Pearson giữa hai danh sách số liệu x và y.
+    Điều kiện: x và y phải có cùng độ dài.
+    """
+    if len(x) != len(y):
+        raise ValueError("Hai danh sách x và y phải có cùng độ dài.")
+
+    n = len(x)
+    mean_x = mean(x)
+    mean_y = mean(y)
+
+    # Tính các thành phần của công thức
+    numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
+    denominator_x = sum((x[i] - mean_x) ** 2 for i in range(n))
+    denominator_y = sum((y[i] - mean_y) ** 2 for i in range(n))
+    denominator = (denominator_x * denominator_y) ** 0.5
+
+    if denominator == 0:
+        return 0  # Trường hợp đặc biệt: nếu biến x hoặc y không thay đổi.
+
+    return numerator / denominator
+
+def interpret_correlation(r):
+    """
+    Đưa ra kết luận dựa trên hệ số tương quan Pearson.
+    """
+    if r == 1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo và cùng chiều."
+    elif r == -1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo nhưng ngược chiều."
+    elif 0.7 <= r < 1:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ và cùng chiều."
+    elif -1 < r <= -0.7:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ nhưng ngược chiều."
+    elif 0.3 <= r < 0.7:
+        return "Hai biến có mối quan hệ tuyến tính trung bình và cùng chiều."
+    elif -0.7 < r <= -0.3:
+        return "Hai biến có mối quan hệ tuyến tính trung bình nhưng ngược chiều."
+    elif -0.3 < r < 0.3:
+        return "Hai biến có rất ít hoặc không có mối quan hệ tuyến tính."
+    else:
+        return "Mối quan hệ giữa hai biến không rõ ràng."
+
+@app.route('/pearson_correlation', methods=['POST'])
+def calculate_correlation():
+    logging.info("Received request at /pearson_correlation")
+
+    if 'file' not in request.files:
+        logging.warning("No file part in the request")
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+
+    if not file.filename.endswith('.csv'):
+        logging.warning("Invalid file format: %s", file.filename)
+        return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    try:
+        file.save(file_path)
+        logging.info("File saved successfully at %s", file_path)
+    except Exception as e:
+        logging.error("Failed to save file: %s", str(e))
+        return jsonify({"error": f"Failed to save file: {str(e)}"}), 500
+
+    try:
+        # Đọc dữ liệu từ CSV file
+        x, y = read_csv(file_path)
+        logging.info("File processed successfully")
+    except Exception as e:
+        logging.error("Failed to read or process file: %s", str(e))
+        return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
+
+    try:
+        # Tính toán hệ số tương quan Pearson
+        r = pearson_correlation(x, y)
+        conclusion = interpret_correlation(r)
+        logging.info("Pearson correlation calculated successfully")
+    except Exception as e:
+        logging.error("Error during correlation calculation: %s", str(e))
+        return jsonify({"error": f"Error calculating correlation: {str(e)}"}), 500
+
+    result = {
+        "pearson_correlation": r,
+        "interpretation": conclusion
+    }
+    logging.info("Results generated successfully")
+
+    return jsonify(result)
 #----------------------------- Tập thô (reduct)-----------------------------
 # Sinh luật với độ chính xác 100%
 def generate_rules(data, reduct):
