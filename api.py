@@ -760,15 +760,7 @@ def association_rules():
     try:
         # Sinh tập phổ biến tối đại và luật kết hợp
         frequent_itemsets, maximal_itemsets = apriori(transactions, min_support)
-        if not frequent_itemsets:
-            logging.warning("No frequent itemsets found")
-            return jsonify({"error": "No frequent itemsets found"}), 200
-
         rules = generate_rules(frequent_itemsets, transactions, min_confidence)
-        if not rules:
-            logging.warning("No association rules found")
-            return jsonify({"error": "No association rules found"}), 200
-
         logging.info("Frequent itemsets and rules generated successfully")
     except Exception as e:
         logging.error("Error during Apriori algorithm execution: %s", str(e))
