@@ -744,41 +744,6 @@ def association_rules():
     return jsonify(result)
 
 #----------------------------- Tập thô (reduct)-----------------------------
-
-def discernibility_matrix(data):
-    """Tạo ma trận phân biệt."""
-    n = len(data)
-    attributes = list(data.columns[:-1])  # Loại bỏ cột quyết định
-    matrix = [[set() for _ in range(n)] for _ in range(n)]
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            diff_attributes = {
-                attr
-                for attr in attributes
-                if data.iloc[i][attr] != data.iloc[j][attr]
-            }
-            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
-                matrix[i][j] = diff_attributes
-    return matrix
-
-# Rút gọn hàm phân biệt
-def reducts_from_matrix(matrix, attributes):
-    """Tìm reducts từ ma trận phân biệt."""
-    formulas = set()
-    for row in matrix:
-        for cell in row:
-            if cell:
-                formulas.add(tuple(sorted(cell)))
-
-    # Tạo tập rút gọn
-    reducts = []
-    for size in range(1, len(attributes) + 1):
-        for combination in generate_combinations(attributes, size):
-            if all(any(set(combination) >= set(term) for term in formulas) for term in formulas):
-                reducts.append(set(combination))
-    return reducts
-
 # Sinh luật với độ chính xác 100%
 def generate_rules(data, reduct):
     """Sinh các luật dựa trên reduct."""
@@ -811,55 +776,6 @@ def generate_combinations(items, length):
     combine([], 0)
     return combinations
 
-def discernibility_matrix(data):
-    """Tạo ma trận phân biệt."""
-    n = len(data)
-    attributes = list(data.columns[:-1])  # Loại bỏ cột quyết định
-    matrix = [[set() for _ in range(n)] for _ in range(n)]
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            diff_attributes = {
-                attr
-                for attr in attributes
-                if data.iloc[i][attr] != data.iloc[j][attr]
-            }
-            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
-                matrix[i][j] = diff_attributes
-    return matrix
-
-
-def reducts_from_matrix(matrix, attributes):
-    """Tìm reducts từ ma trận phân biệt."""
-    formulas = set()
-    for row in matrix:
-        for cell in row:
-            if cell:
-                formulas.add(tuple(sorted(cell)))
-
-    reducts = []
-    for size in range(1, len(attributes) + 1):
-        for combination in generate_combinations(attributes, size):
-            if all(any(set(combination) >= set(term) for term in formulas) for term in formulas):
-                reducts.append(set(combination))
-    return reducts
-
-
-def generate_rules(data, reduct):
-    """Sinh các luật dựa trên reduct."""
-    rules = []
-    decision_col = data.columns[-1]
-
-    for _, group in data.groupby(list(reduct)):
-        decisions = group[decision_col].unique()
-        if len(decisions) == 1:  # Chỉ tạo luật nếu quyết định duy nhất
-            condition = " AND ".join(
-                f"{col}={group.iloc[0][col]}" for col in reduct
-            )
-            rule = f"IF {condition} THEN {decision_col}={decisions[0]}"
-            rules.append(rule)
-    return rules
-
 def indiscernibility_relation(data, attributes):
     """Calculate indiscernibility relation for given attributes."""
     groups = data.groupby(attributes).groups
@@ -877,13 +793,78 @@ def upper_approximation(data, target_set, ind_relation):
     """Calculate upper approximation of a target set."""
     upper = []
     for subset in ind_relation:
-        if set(subset) & target_set:
+        if set(subset) & set(target_set):
             upper.extend(subset)
     return upper
 
 def rough_accuracy(lower, upper):
     """Calculate the accuracy of a rough set."""
     return len(lower) / len(upper) if len(upper) > 0 else 0
+
+def discernibility_matrix(data):
+    """Tạo ma trận phân biệt."""
+    n = len(data)
+    attributes = list(data.columns[1:-1])  # Loại bỏ cột quyết định
+    matrix = [[set() for _ in range(n)] for _ in range(n)]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            diff_attributes = {
+                attr
+                for attr in attributes
+                if data.iloc[i][attr] != data.iloc[j][attr]
+            }
+            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
+                matrix[i][j] = diff_attributes
+    return matrix
+
+def get_discernibility_conditions(matrix):
+    """Trích xuất tất cả các điều kiện phân biệt từ ma trận."""
+    conditions = set()
+    for row in matrix:
+        for cell in row:
+            if cell:  # Chỉ lưu các tập khác rỗng
+                conditions.add(frozenset(cell))
+    return list(conditions)
+
+def reducts_from_conditions(attributes, conditions):
+    """Tính reduct nhỏ nhất từ các điều kiện phân biệt."""
+    min_reduct_size = len(attributes)  # Kích thước reduct nhỏ nhất
+    reducts = []
+
+    def satisfies_condition(subset):
+        subset_set = set(subset)
+        return all(
+            any(term.issubset(subset_set) for term in conditions)
+            for term in conditions
+        )
+
+    for size in range(1, len(attributes) + 1):
+        for subset in generate_all_combinations(attributes):
+            if len(subset) == size and satisfies_condition(subset):
+                if size < min_reduct_size:
+                    reducts = [set(subset)]
+                    min_reduct_size = size
+                elif size == min_reduct_size:
+                    reducts.append(set(subset))
+        if reducts:  # Kết thúc ngay khi tìm thấy reduct nhỏ nhất
+            break
+
+    return reducts
+
+def generate_all_combinations(attributes):
+    """Sinh tất cả các tổ hợp thuộc tính."""
+    combinations = []
+
+    def combine(current, start):
+        if current:
+            combinations.append(current)
+        for i in range(start, len(attributes)):
+            combine(current + [attributes[i]], i + 1)
+
+    combine([], 0)
+    return combinations
+
 
 @app.route('/rough-set', methods=['POST'])
 def rough_set():
@@ -898,32 +879,52 @@ def rough_set():
 
         # Đọc file CSV thành DataFrame
         dataset = pd.read_csv(file)
-        attributes = list(dataset.columns[:-1])  # Mặc định các thuộc tính
-        target_class = dataset[dataset.columns[-1]].unique()  # Các lớp quyết định
+        attributes = list(dataset.columns[1:-1])  # Bỏ qua cột đầu tiên và cột quyết định
+        target_class_combinations = generate_all_combinations(attributes)
 
         # Tính toán tập thô
-        ind_relation = indiscernibility_relation(dataset, attributes)
-        lower = {cls: lower_approximation(dataset, set(dataset[dataset.columns[-1]] == cls).index, ind_relation)
-                 for cls in target_class}
-        upper = {cls: upper_approximation(dataset, set(dataset[dataset.columns[-1]] == cls).index, ind_relation)
-                 for cls in target_class}
-        accuracy = {cls: rough_accuracy(lower[cls], upper[cls]) for cls in target_class}
+        rough_set_results = {}
+
+        for comb in target_class_combinations:
+            ind_relation = indiscernibility_relation(dataset, comb)
+            lower = {}
+            upper = {}
+            accuracy = {}
+
+            # Lấy các lớp quyết định
+            decision_classes = dataset[dataset.columns[-1]].unique()
+
+            for cls in decision_classes:
+                # Chuyển cls thành chuỗi để tránh lỗi so sánh
+                target_set = dataset.index[
+                    dataset[dataset.columns[-1]] == str(cls)  # cls phải phù hợp với giá trị trong cột quyết định
+                ].tolist()
+
+                # Tính toán lower và upper approximation
+                lower[str(cls)] = lower_approximation(dataset, target_set, ind_relation)
+                upper[str(cls)] = upper_approximation(dataset, target_set, ind_relation)
+
+                # Tính accuracy
+                accuracy[str(cls)] = rough_accuracy(lower[str(cls)], upper[str(cls)])
+
+            rough_set_results[str(comb)] = {
+                "lower_approximation": lower,
+                "upper_approximation": upper,
+                "accuracy": accuracy,
+            }
 
         # Tính reducts và sinh luật
         matrix = discernibility_matrix(dataset)
-        reducts = reducts_from_matrix(matrix, attributes)
+        conditions = get_discernibility_conditions(matrix)
+        reducts = reducts_from_conditions(attributes, conditions)
         all_rules = {}
         for reduct in reducts:
             rules = generate_rules(dataset, reduct)
             all_rules[f"Reduct {list(reduct)}"] = rules
 
+        # Trả về kết quả
         return jsonify({
-            'rough_set': {
-                'indiscernibility_relation': ind_relation,
-                'lower_approximation': {cls: list(indices) for cls, indices in lower.items()},
-                'upper_approximation': {cls: list(indices) for cls, indices in upper.items()},
-                'accuracy': accuracy
-            },
+            'rough_set': rough_set_results,
             'reducts_and_rules': {
                 'reducts': [list(reduct) for reduct in reducts],
                 'rules': all_rules
@@ -932,6 +933,8 @@ def rough_set():
 
     except Exception as e:
         return jsonify({'error': f"An unexpected error occurred: {str(e)}"}), 500
+
+
     
 @app.errorhandler(404)
 def page_not_found(e):
