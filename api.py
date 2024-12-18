@@ -1,3 +1,4 @@
+import csv
 from flask import Flask, jsonify, request,send_from_directory
 from flask_cors import CORS
 import numpy as np
@@ -575,7 +576,8 @@ def calculate_support(transactions, itemsets):
     for itemset in itemsets:
         count = 0
         for transaction in transactions:
-            if all(item in transaction for item in itemset):
+            # Chuyển itemset và transaction sang set để sử dụng issubset
+            if set(itemset).issubset(set(transaction)):
                 count += 1
         support_count[tuple(itemset)] = count
     return support_count
@@ -594,6 +596,79 @@ def generate_combinations(items, length):
     return combinations
 
 # Generate frequent itemsets
+
+def generate_rules(frequent_itemsets, transactions, min_confidence):
+    """
+    Generate association rules from frequent itemsets.
+    """
+    logging.info("Starting rule generation")
+    
+    # Tạo bảng tra cứu hỗ trợ (support_table)
+    support_table = {}
+    for item in frequent_itemsets:
+        # Lấy đúng `itemset` từ dict
+        itemset = item["itemset"]
+        support_table[frozenset(itemset)] = item["support"]
+
+    rules = []
+    for item in frequent_itemsets:
+        itemset = item["itemset"]  # Lấy itemset từ dict
+        if len(itemset) < 2:
+            continue  # Bỏ qua các tập chỉ có 1 phần tử
+
+        itemset_frozen = frozenset(itemset)
+        subsets = generate_subsets(itemset)  # Sinh tất cả tập con không rỗng
+        for antecedent in subsets:
+            antecedent_frozen = frozenset(antecedent)
+            consequent = itemset_frozen - antecedent_frozen
+            if consequent:
+                # Tra cứu hỗ trợ
+                support_itemset = support_table[itemset_frozen]
+                support_antecedent = support_table[antecedent_frozen]
+
+                # Tính độ tin cậy
+                confidence = support_itemset / support_antecedent if support_antecedent > 0 else 0
+                if confidence >= min_confidence:
+                    # Thêm luật vào danh sách
+                    rules.append({
+                        "antecedent": set(antecedent),
+                        "consequent": set(consequent),
+                        "confidence": confidence,
+                    })
+    logging.info("Rule generation finished")
+    return rules
+
+logging.basicConfig(level=logging.DEBUG,  # Log everything from DEBUG level and above
+                    format='%(asctime)s [%(levelname)s] %(message)s',
+                    handlers=[
+                        logging.FileHandler("app.log"),  # Log to file
+                        logging.StreamHandler()         # Log to console
+                    ])
+
+# Hàm sinh tập phổ biến tối đại
+def find_maximal_itemsets(frequent_itemsets):
+    """
+    Tìm tập phổ biến tối đại từ danh sách các tập phổ biến.
+
+    Parameters:
+        frequent_itemsets (list of dict): Danh sách các tập phổ biến với cấu trúc
+            [{"itemset": [items], "support": support_value}, ...]
+
+    Returns:
+        list of dict: Danh sách các tập phổ biến tối đại với cấu trúc tương tự frequent_itemsets.
+    """
+    # Chuyển danh sách tập phổ biến thành danh sách tập hợp để dễ xử lý
+    itemsets = [set(item["itemset"]) for item in frequent_itemsets]
+    maximal_itemsets = []
+
+    for i, itemset in enumerate(itemsets):
+        # Kiểm tra nếu không có tập phổ biến nào chứa itemset hiện tại
+        is_maximal = all(not itemset < other for j, other in enumerate(itemsets) if i != j)
+        if is_maximal:
+            maximal_itemsets.append(frequent_itemsets[i])
+
+    return maximal_itemsets
+
 def apriori(transactions, min_support):
     logging.info("Starting Apriori algorithm")
     single_items = list(set(item for transaction in transactions for item in transaction))
@@ -625,99 +700,12 @@ def apriori(transactions, min_support):
         step += 1
 
     logging.info("Apriori algorithm finished")
-    return frequent_itemsets
+    # Tìm tập phổ biến tối đại từ frequent itemsets
+    maximal_itemsets = find_maximal_itemsets(frequent_itemsets)
+    logging.info("Maximal itemsets: %s", maximal_itemsets)
+    return frequent_itemsets, maximal_itemsets
 
-def generate_rules(frequent_itemsets, transactions, min_confidence):
-    logging.info("Starting rule generation")
-    rules = []
-    for itemset in frequent_itemsets:
-        if len(itemset) < 2:
-            continue
-        for i in range(1, len(itemset)):
-            subsets = generate_combinations(itemset, i)
-            for subset in subsets:
-                remainder = [item for item in itemset if item not in subset]
-                if remainder:
-                    support_itemset = calculate_support(transactions, [itemset])[tuple(itemset)]
-                    support_subset = calculate_support(transactions, [subset])[tuple(subset)]
-                    confidence = support_itemset / support_subset
-                    if confidence >= min_confidence:
-                        rule = {
-                            "antecedent": subset,
-                            "consequent": remainder,
-                            "confidence": confidence
-                        }
-                        logging.info("Generated rule: %s -> %s with confidence = %f",
-                                     subset, remainder, confidence)
-                        rules.append(rule)
-    logging.info("Rule generation finished")
-    return rules
 
-logging.basicConfig(level=logging.DEBUG,  # Log everything from DEBUG level and above
-                    format='%(asctime)s [%(levelname)s] %(message)s',
-                    handlers=[
-                        logging.FileHandler("app.log"),  # Log to file
-                        logging.StreamHandler()         # Log to console
-                    ])
-
-def calculate_support(transactions, itemset):
-    count = sum(1 for transaction in transactions if itemset.issubset(transaction))
-    return count / len(transactions)
-
-# Hàm sinh tập phổ biến tối đại
-def find_frequent_itemsets(transactions, minsup):
-    items = {item for transaction in transactions for item in transaction}
-    level_1 = [{item} for item in items if calculate_support(transactions, {item}) >= minsup]
-    frequent_itemsets = [set(itemset) for itemset in level_1]
-    all_frequent = [frequent_itemsets]
-
-    k = 2
-    while True:
-        candidates = []
-        previous_level = all_frequent[-1]
-        for i in range(len(previous_level)):
-            for j in range(i + 1, len(previous_level)):
-                union_set = previous_level[i] | previous_level[j]
-                if len(union_set) == k and union_set not in candidates:
-                    candidates.append(union_set)
-                    # Lọc tập phổ biến
-        current_level = [c for c in candidates if calculate_support(transactions, c) >= minsup]
-        if not current_level:
-            break
-        all_frequent.append(current_level)
-        frequent_itemsets.extend(current_level)
-        k += 1
-        
-# Lọc tập phổ biến tối đại
-    maximal_itemsets = []
-    for itemset in frequent_itemsets:
-        if not any(itemset < other for other in frequent_itemsets): # Kiểm tra không có tập cha nào phổ biến hơn
-            maximal_itemsets.append(itemset)
-    return maximal_itemsets
-# Hàm sinh luật kết hợp từ tập phổ biến tối đại
-def generate_association_rules(maximal_itemsets, transactions, minconf):
-    rules = []
-    for itemset in maximal_itemsets:
-        subsets = [set(sub) for sub in generate_subsets(itemset)]
-        for antecedent in subsets:
-            consequent = itemset - antecedent
-            if antecedent and consequent:
-                support_itemset = calculate_support(transactions, itemset)
-                support_antecedent = calculate_support(transactions, antecedent)
-                confidence = support_itemset / support_antecedent if support_antecedent > 0 else 0
-                if confidence >= minconf:
-                    rules.append((antecedent, consequent, confidence))
-    return rules
-    
-# Sinh tất cả tập hợp con của một tập hợp
-def generate_subsets(itemset):
-    items = list(itemset)
-    subsets = []
-    for i in range(1, 1 << len(items)): # Từ 1 đến 2^n - 1
-        subset = {items[j] for j in range(len(items)) if (i & (1 << j))}
-        subsets.append(subset)
-    return subsets
-    
 # Sinh tất cả tập hợp con của một tập hợp
 def generate_subsets(itemset):
     items = list(itemset)
@@ -753,7 +741,8 @@ def association_rules():
         # Read data from CSV file
         data = pd.read_csv(file_path)
         transactions = data.applymap(str).fillna('').values.tolist()
-        transactions = [[item for item in transaction if item] for transaction in transactions]
+# Loại bỏ cột đầu tiên bằng cách lấy tất cả cột từ cột thứ 2 trở đi
+        transactions = [[item for item in transaction[1:] if item] for transaction in transactions]
         logging.info("File processed successfully")
     except Exception as e:
         logging.error("Failed to read or process file: %s", str(e))
@@ -770,12 +759,12 @@ def association_rules():
         
     try:
         # Sinh tập phổ biến tối đại và luật kết hợp
-        maximal_itemsets = find_frequent_itemsets(transactions, min_support)
-        if not maximal_itemsets:
+        frequent_itemsets, maximal_itemsets = apriori(transactions, min_support)
+        if not frequent_itemsets:
             logging.warning("No frequent itemsets found")
             return jsonify({"error": "No frequent itemsets found"}), 200
 
-        rules = generate_association_rules(maximal_itemsets, transactions, min_confidence)
+        rules = generate_rules(frequent_itemsets, transactions, min_confidence)
         if not rules:
             logging.warning("No association rules found")
             return jsonify({"error": "No association rules found"}), 200
@@ -785,38 +774,46 @@ def association_rules():
         logging.error("Error during Apriori algorithm execution: %s", str(e))
         return jsonify({"error": f"Error generating association rules: {str(e)}"}), 500
     result = {
-        "maximal_itemsets": [list(itemset) for itemset in maximal_itemsets],
-        "rules": [
-            {
-                "antecedent": list(rule[0]),
-                "consequent": list(rule[1]),
-                "confidence": rule[2]
-            }
-            for rule in rules
-        ]
-    }
+    "frequent_itemsets": [
+        {"itemset": list(item["itemset"]), "support": item["support"]}
+        for item in frequent_itemsets
+    ],
+    "maximal_itemsets": [
+        {"itemset": list(item["itemset"]), "support": item["support"]}
+        for item in maximal_itemsets
+    ],
+    "rules": [
+        {
+            "antecedent": list(rule["antecedent"]),
+            "consequent": list(rule["consequent"]),
+            "confidence": rule["confidence"]
+        }
+        for rule in rules
+    ]
+}
+
     logging.info("Results generated successfully")
     
     # Return results
     return jsonify(result)
 
 #-----------------------------ĐỘ TƯƠNG QUAN--------------------------------
-
+    
 def read_csv(file_path):
-    """
-    Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
-    Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
-    """
-    x = []
-    y = []
-    with open(file_path, mode='r', encoding='utf-8') as file:
-        reader = csv.reader(file)
-        next(reader)  # Bỏ qua dòng tiêu đề, nếu có
-        for row in reader:
-            if len(row) >= 2:  # Đảm bảo có ít nhất 2 cột
-                x.append(float(row[0].strip()))
-                y.append(float(row[1].strip()))
-    return x, y
+        """
+        Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
+        Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
+        """
+        x = []
+        y = []
+        with open(file_path, mode='r', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Bỏ qua dòng tiêu đề, nếu có
+            for row in reader:
+                if len(row) >= 2:  # Đảm bảo có ít nhất 2 cột
+                    x.append(float(row[0].strip()))
+                    y.append(float(row[1].strip()))
+        return x, y
 
 def mean(values):
     """Tính giá trị trung bình."""
@@ -914,7 +911,7 @@ def calculate_correlation():
     return jsonify(result)
 #----------------------------- Tập thô (reduct)-----------------------------
 # Sinh luật với độ chính xác 100%
-def generate_rules(data, reduct):
+def generate_rules_rough_set(data, reduct):
     """Sinh các luật dựa trên reduct."""
     rules = []
     decision_col = data.columns[-1]
@@ -929,21 +926,6 @@ def generate_rules(data, reduct):
             rules.append(rule)
     return rules
 
-# Sinh tổ hợp
-def generate_combinations(items, length):
-    """Sinh tất cả các tổ hợp của độ dài cho trước."""
-    combinations = []
-    n = len(items)
-
-    def combine(current, start):
-        if len(current) == length:
-            combinations.append(current)
-            return
-        for i in range(start, n):
-            combine(current + [items[i]], i + 1)
-
-    combine([], 0)
-    return combinations
 
 def indiscernibility_relation(data, attributes):
     """Calculate indiscernibility relation for given attributes."""
@@ -1088,7 +1070,7 @@ def rough_set():
         reducts = reducts_from_conditions(attributes, conditions)
         all_rules = {}
         for reduct in reducts:
-            rules = generate_rules(dataset, reduct)
+            rules = generate_rules_rough_set(dataset, reduct)
             all_rules[f"Reduct {list(reduct)}"] = rules
 
         # Trả về kết quả
