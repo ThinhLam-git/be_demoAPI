@@ -178,11 +178,11 @@ def run_decision_tree():
     tree = build_tree(data) 
  
     # Vẽ cây quyết định và lấy tên file hình ảnh
-    filename = os.path.join(app.config['UPLOAD_FOLDER'], "DecisionTree3.png")
+    filename = os.path.join(app.config['UPLOAD_FOLDER'], "DecisionTree.png")
     image_file = plot_tree(tree, filename=filename)
-
+    
     result = {
-         "image_file": image_file,
+         "image_file": f"https://be-webdm.onrender.com/uploads/{os.path.basename(image_file)}"
     }
     return jsonify(result)
 
