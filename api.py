@@ -557,7 +557,7 @@ def naive_bayes_with_smoothing():
     }
     return jsonify(result)
 
-#----------------------------------------------------------------------------
+#------------------------------tap pho bien -----------------------
 # Function to calculate support
 def calculate_support(transactions, itemsets):
     support_count = {}
@@ -683,7 +683,39 @@ def find_frequent_itemsets(transactions, minsup):
         if not any(itemset < other for other in frequent_itemsets): # Kiểm tra không có tập cha nào phổ biến hơn
             maximal_itemsets.append(itemset)
     return maximal_itemsets
-
+# Hàm sinh luật kết hợp từ tập phổ biến tối đại
+def generate_association_rules(maximal_itemsets, transactions, minconf):
+    rules = []
+    for itemset in maximal_itemsets:
+        subsets = [set(sub) for sub in generate_subsets(itemset)]
+        for antecedent in subsets:
+            consequent = itemset - antecedent
+            if antecedent and consequent:
+                support_itemset = calculate_support(transactions, itemset)
+                support_antecedent = calculate_support(transactions, antecedent)
+                confidence = support_itemset / support_antecedent if support_antecedent > 0 else 0
+                if confidence >= minconf:
+                    rules.append((antecedent, consequent, confidence))
+    return rules
+    
+# Sinh tất cả tập hợp con của một tập hợp
+def generate_subsets(itemset):
+    items = list(itemset)
+    subsets = []
+    for i in range(1, 1 << len(items)): # Từ 1 đến 2^n - 1
+        subset = {items[j] for j in range(len(items)) if (i & (1 << j))}
+        subsets.append(subset)
+    return subsets
+    
+# Sinh tất cả tập hợp con của một tập hợp
+def generate_subsets(itemset):
+    items = list(itemset)
+    subsets = []
+    for i in range(1, 1 << len(items)): # Từ 1 đến 2^n - 1
+        subset = {items[j] for j in range(len(items)) if (i & (1 << j))}
+        subsets.append(subset)
+    return subsets
+    
 @app.route('/association_rules', methods=['POST'])
 def association_rules():
     logging.info("Received request at /association_rules")
@@ -718,25 +750,31 @@ def association_rules():
 
     # Get parameters from user input
     try:
-        min_support = float(request.form.get('min_support', 0.5))
-        min_confidence = float(request.form.get('min_confidence', 0.7))
-        logging.info("Parameters received: min_support=%f, min_confidence=%f", min_support, min_confidence)
-    except ValueError:
-        logging.error("Invalid parameters for min_support or min_confidence")
-        return jsonify({"error": "Invalid parameters for min_support or min_confidence"}), 400
+        # Sinh tập phổ biến tối đại và luật kết hợp
+        maximal_itemsets = find_frequent_itemsets(transactions, min_support)
+        if not maximal_itemsets:
+            logging.warning("No frequent itemsets found")
+            return jsonify({"error": "No frequent itemsets found"}), 200
 
-    try:
-        # Generate frequent itemsets and association rules
-        frequent_itemsets = apriori(transactions, min_support)
-        rules = generate_rules(frequent_itemsets, transactions, min_confidence)
-        logging.info("Apriori algorithm executed successfully")
+        rules = generate_association_rules(maximal_itemsets, transactions, min_confidence)
+        if not rules:
+            logging.warning("No association rules found")
+            return jsonify({"error": "No association rules found"}), 200
+
+        logging.info("Frequent itemsets and rules generated successfully")
     except Exception as e:
         logging.error("Error during Apriori algorithm execution: %s", str(e))
         return jsonify({"error": f"Error generating association rules: {str(e)}"}), 500
-
     result = {
-        "frequent_itemsets": frequent_itemsets,
-        "rules": rules
+        "maximal_itemsets": [list(itemset) for itemset in maximal_itemsets],
+        "rules": [
+            {
+                "antecedent": list(rule[0]),
+                "consequent": list(rule[1]),
+                "confidence": rule[2]
+            }
+            for rule in rules
+        ]
     }
     logging.info("Results generated successfully")
     
