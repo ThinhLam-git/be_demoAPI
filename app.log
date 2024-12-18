@@ -156,3 +156,7 @@
 2024-12-18 11:51:29,186 [INFO] 127.0.0.1 - - [18/Dec/2024 11:51:29] "GET /uploads/DecisionTree.png HTTP/1.1" 200 -
 2024-12-18 11:51:43,317 [INFO]  * Detected change in 'D:\\2024-2025\\Data_Mining\\new\\be_demoAPI\\api.py', reloading
 2024-12-18 11:51:43,655 [INFO]  * Restarting with stat
+2024-12-18 11:51:46,087 [WARNING]  * Debugger is active!
+2024-12-18 11:51:46,092 [INFO]  * Debugger PIN: 111-440-290
+2024-12-18 11:54:21,082 [INFO]  * Detected change in 'D:\\2024-2025\\Data_Mining\\new\\be_demoAPI\\api.py', reloading
+2024-12-18 11:54:21,393 [INFO]  * Restarting with stat

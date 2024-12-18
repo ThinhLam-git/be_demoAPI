@@ -328,7 +328,7 @@ def run_clustering():
     }
     return jsonify(result)
 
-# -----------------------------------------------------------------------------------------
+# -------------------------------------------NAIVE BAYES----------------------------------------------
 
 class NaiveBayesClassifier:
     def __init__(self, smoothing=False):
@@ -338,62 +338,69 @@ class NaiveBayesClassifier:
         self.smoothing = smoothing
 
     def fit(self, X, y):
-        # Xác định các lớp
         self.classes = np.unique(y)
         n_samples, n_features = X.shape
 
         # Tính xác suất của mỗi lớp
         self.class_probs = {}
+        step_details = {'class_probs': {}, 'feature_probs': {}}
         for cls in self.classes:
             self.class_probs[cls] = np.sum(y == cls) / n_samples
+            step_details['class_probs'][cls] = self.class_probs[cls]
 
         # Tính xác suất của các đặc trưng cho mỗi lớp
         self.feature_probs = {}
         for cls in self.classes:
             X_cls = X[y == cls]
-            
-            # Khởi tạo từng đặc trưng
             cls_feature_probs = []
+            feature_details = []
+
             for feature_idx in range(n_features):
                 feature_values = X_cls[:, feature_idx]
                 unique_values = np.unique(feature_values)
-                
-                # Xác suất của từng giá trị đặc trưng
+
                 value_probs = {}
+                value_details = {}
                 for val in unique_values:
-                    if self.smoothing:  # Làm trơn Laplace
+                    if self.smoothing:
                         count = np.sum((feature_values == val)) + 1
                         total = len(feature_values) + len(unique_values)
-                    else:  # Không làm trơn
+                    else:
                         count = np.sum((feature_values == val))
                         total = len(feature_values)
-                    
-                    value_probs[val] = count / total
-                
+
+                    prob = count / total
+                    value_probs[val] = prob
+                    value_details[val] = {'count': count, 'total': total, 'prob': prob}
+
                 cls_feature_probs.append(value_probs)
-            
+                feature_details.append(value_details)
+
             self.feature_probs[cls] = cls_feature_probs
+            step_details['feature_probs'][cls] = feature_details
+
+        return step_details
 
     def predict(self, X):
         predictions = []
+        prediction_details = []
         for sample in X:
-            # Tính xác suất cho từng lớp
             class_scores = {}
+            sample_details = {'features': sample.tolist(), 'scores': {}}
+
             for cls in self.classes:
-                # Bắt đầu với log xác suất của lớp  
                 score = math.log(self.class_probs[cls])
-                
-                # Cộng log xác suất của từng đặc trưng
                 for feature_idx, feature_val in enumerate(sample):
                     feature_prob = self.feature_probs[cls][feature_idx].get(feature_val, 1e-10)
                     score += math.log(feature_prob)
-                
+
                 class_scores[cls] = score
-            
-            # Chọn lớp có điểm số cao nhất
+                sample_details['scores'][cls] = score
+
             predictions.append(max(class_scores, key=class_scores.get))
-        
-        return np.array(predictions)
+            prediction_details.append(sample_details)
+
+        return np.array(predictions), prediction_details
 
 def calculate_confusion_matrix(y_true, y_pred, classes):
     """Tính ma trận nhầm lẫn"""
@@ -477,8 +484,8 @@ def naive_bayes_no_smoothing():
 
     # Thuật toán Naive Bayes không làm trơn Laplace
     nb_classifier = NaiveBayesClassifier(smoothing=False)
-    nb_classifier.fit(X_train, y_train)
-    y_pred = nb_classifier.predict(X_test)
+    fit_details = nb_classifier.fit(X_train, y_train)
+    y_pred, predict_details = nb_classifier.predict(X_test)
     
     # Tính toán các độ đo
     classes = np.unique(y)
@@ -493,6 +500,8 @@ def naive_bayes_no_smoothing():
         "accuracy": accuracy,
         "confusion_matrix": confusion_matrix,
         "class_metrics": metrics,
+        "fit_details": fit_details,
+        "predict_details": predict_details,
         "classes": classes.tolist()
     }
     return jsonify(result)
@@ -537,8 +546,8 @@ def naive_bayes_with_smoothing():
 
     # Thuật toán Naive Bayes có làm trơn Laplace
     nb_classifier = NaiveBayesClassifier(smoothing=True)
-    nb_classifier.fit(X_train, y_train)
-    y_pred = nb_classifier.predict(X_test)
+    fit_details = nb_classifier.fit(X_train, y_train)
+    y_pred, predict_details = nb_classifier.predict(X_test)
     
     # Tính toán các độ đo
     classes = np.unique(y)
@@ -553,11 +562,13 @@ def naive_bayes_with_smoothing():
         "accuracy": accuracy,
         "confusion_matrix": confusion_matrix,
         "class_metrics": metrics,
+        "fit_details": fit_details,
+        "predict_details": predict_details,
         "classes": classes.tolist()
     }
     return jsonify(result)
 
-#----------------------------------------------------------------------------
+#------------------------------tap pho bien -----------------------
 # Function to calculate support
 def calculate_support(transactions, itemsets):
     support_count = {}
@@ -649,6 +660,73 @@ logging.basicConfig(level=logging.DEBUG,  # Log everything from DEBUG level and 
                         logging.StreamHandler()         # Log to console
                     ])
 
+def calculate_support(transactions, itemset):
+    count = sum(1 for transaction in transactions if itemset.issubset(transaction))
+    return count / len(transactions)
+
+# Hàm sinh tập phổ biến tối đại
+def find_frequent_itemsets(transactions, minsup):
+    items = {item for transaction in transactions for item in transaction}
+    level_1 = [{item} for item in items if calculate_support(transactions, {item}) >= minsup]
+    frequent_itemsets = [set(itemset) for itemset in level_1]
+    all_frequent = [frequent_itemsets]
+
+    k = 2
+    while True:
+        candidates = []
+        previous_level = all_frequent[-1]
+        for i in range(len(previous_level)):
+            for j in range(i + 1, len(previous_level)):
+                union_set = previous_level[i] | previous_level[j]
+                if len(union_set) == k and union_set not in candidates:
+                    candidates.append(union_set)
+                    # Lọc tập phổ biến
+        current_level = [c for c in candidates if calculate_support(transactions, c) >= minsup]
+        if not current_level:
+            break
+        all_frequent.append(current_level)
+        frequent_itemsets.extend(current_level)
+        k += 1
+        
+# Lọc tập phổ biến tối đại
+    maximal_itemsets = []
+    for itemset in frequent_itemsets:
+        if not any(itemset < other for other in frequent_itemsets): # Kiểm tra không có tập cha nào phổ biến hơn
+            maximal_itemsets.append(itemset)
+    return maximal_itemsets
+# Hàm sinh luật kết hợp từ tập phổ biến tối đại
+def generate_association_rules(maximal_itemsets, transactions, minconf):
+    rules = []
+    for itemset in maximal_itemsets:
+        subsets = [set(sub) for sub in generate_subsets(itemset)]
+        for antecedent in subsets:
+            consequent = itemset - antecedent
+            if antecedent and consequent:
+                support_itemset = calculate_support(transactions, itemset)
+                support_antecedent = calculate_support(transactions, antecedent)
+                confidence = support_itemset / support_antecedent if support_antecedent > 0 else 0
+                if confidence >= minconf:
+                    rules.append((antecedent, consequent, confidence))
+    return rules
+    
+# Sinh tất cả tập hợp con của một tập hợp
+def generate_subsets(itemset):
+    items = list(itemset)
+    subsets = []
+    for i in range(1, 1 << len(items)): # Từ 1 đến 2^n - 1
+        subset = {items[j] for j in range(len(items)) if (i & (1 << j))}
+        subsets.append(subset)
+    return subsets
+    
+# Sinh tất cả tập hợp con của một tập hợp
+def generate_subsets(itemset):
+    items = list(itemset)
+    subsets = []
+    for i in range(1, 1 << len(items)): # Từ 1 đến 2^n - 1
+        subset = {items[j] for j in range(len(items)) if (i & (1 << j))}
+        subsets.append(subset)
+    return subsets
+    
 @app.route('/association_rules', methods=['POST'])
 def association_rules():
     logging.info("Received request at /association_rules")
@@ -689,61 +767,152 @@ def association_rules():
     except ValueError:
         logging.error("Invalid parameters for min_support or min_confidence")
         return jsonify({"error": "Invalid parameters for min_support or min_confidence"}), 400
-
+        
     try:
-        # Generate frequent itemsets and association rules
-        frequent_itemsets = apriori(transactions, min_support)
-        rules = generate_rules(frequent_itemsets, transactions, min_confidence)
-        logging.info("Apriori algorithm executed successfully")
+        # Sinh tập phổ biến tối đại và luật kết hợp
+        maximal_itemsets = find_frequent_itemsets(transactions, min_support)
+        if not maximal_itemsets:
+            logging.warning("No frequent itemsets found")
+            return jsonify({"error": "No frequent itemsets found"}), 200
+
+        rules = generate_association_rules(maximal_itemsets, transactions, min_confidence)
+        if not rules:
+            logging.warning("No association rules found")
+            return jsonify({"error": "No association rules found"}), 200
+
+        logging.info("Frequent itemsets and rules generated successfully")
     except Exception as e:
         logging.error("Error during Apriori algorithm execution: %s", str(e))
         return jsonify({"error": f"Error generating association rules: {str(e)}"}), 500
-
     result = {
-        "frequent_itemsets": frequent_itemsets,
-        "rules": rules
+        "maximal_itemsets": [list(itemset) for itemset in maximal_itemsets],
+        "rules": [
+            {
+                "antecedent": list(rule[0]),
+                "consequent": list(rule[1]),
+                "confidence": rule[2]
+            }
+            for rule in rules
+        ]
     }
     logging.info("Results generated successfully")
     
     # Return results
     return jsonify(result)
 
+#-----------------------------ĐỘ TƯƠNG QUAN--------------------------------
+
+def read_csv(file_path):
+    """
+    Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
+    Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
+    """
+    x = []
+    y = []
+    with open(file_path, mode='r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        next(reader)  # Bỏ qua dòng tiêu đề, nếu có
+        for row in reader:
+            if len(row) >= 2:  # Đảm bảo có ít nhất 2 cột
+                x.append(float(row[0].strip()))
+                y.append(float(row[1].strip()))
+    return x, y
+
+def mean(values):
+    """Tính giá trị trung bình."""
+    return sum(values) / len(values)
+
+def pearson_correlation(x, y):
+    """
+    Tính hệ số tương quan Pearson giữa hai danh sách số liệu x và y.
+    Điều kiện: x và y phải có cùng độ dài.
+    """
+    if len(x) != len(y):
+        raise ValueError("Hai danh sách x và y phải có cùng độ dài.")
+
+    n = len(x)
+    mean_x = mean(x)
+    mean_y = mean(y)
+
+    # Tính các thành phần của công thức
+    numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
+    denominator_x = sum((x[i] - mean_x) ** 2 for i in range(n))
+    denominator_y = sum((y[i] - mean_y) ** 2 for i in range(n))
+    denominator = (denominator_x * denominator_y) ** 0.5
+
+    if denominator == 0:
+        return 0  # Trường hợp đặc biệt: nếu biến x hoặc y không thay đổi.
+
+    return numerator / denominator
+
+def interpret_correlation(r):
+    """
+    Đưa ra kết luận dựa trên hệ số tương quan Pearson.
+    """
+    if r == 1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo và cùng chiều."
+    elif r == -1:
+        return "Hai biến có mối quan hệ tuyến tính hoàn hảo nhưng ngược chiều."
+    elif 0.7 <= r < 1:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ và cùng chiều."
+    elif -1 < r <= -0.7:
+        return "Hai biến có mối quan hệ tuyến tính chặt chẽ nhưng ngược chiều."
+    elif 0.3 <= r < 0.7:
+        return "Hai biến có mối quan hệ tuyến tính trung bình và cùng chiều."
+    elif -0.7 < r <= -0.3:
+        return "Hai biến có mối quan hệ tuyến tính trung bình nhưng ngược chiều."
+    elif -0.3 < r < 0.3:
+        return "Hai biến có rất ít hoặc không có mối quan hệ tuyến tính."
+    else:
+        return "Mối quan hệ giữa hai biến không rõ ràng."
+
+@app.route('/pearson_correlation', methods=['POST'])
+def calculate_correlation():
+    logging.info("Received request at /pearson_correlation")
+
+    if 'file' not in request.files:
+        logging.warning("No file part in the request")
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+
+    if not file.filename.endswith('.csv'):
+        logging.warning("Invalid file format: %s", file.filename)
+        return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    try:
+        file.save(file_path)
+        logging.info("File saved successfully at %s", file_path)
+    except Exception as e:
+        logging.error("Failed to save file: %s", str(e))
+        return jsonify({"error": f"Failed to save file: {str(e)}"}), 500
+
+    try:
+        # Đọc dữ liệu từ CSV file
+        x, y = read_csv(file_path)
+        logging.info("File processed successfully")
+    except Exception as e:
+        logging.error("Failed to read or process file: %s", str(e))
+        return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
+
+    try:
+        # Tính toán hệ số tương quan Pearson
+        r = pearson_correlation(x, y)
+        conclusion = interpret_correlation(r)
+        logging.info("Pearson correlation calculated successfully")
+    except Exception as e:
+        logging.error("Error during correlation calculation: %s", str(e))
+        return jsonify({"error": f"Error calculating correlation: {str(e)}"}), 500
+
+    result = {
+        "pearson_correlation": r,
+        "interpretation": conclusion
+    }
+    logging.info("Results generated successfully")
+
+    return jsonify(result)
 #----------------------------- Tập thô (reduct)-----------------------------
-
-def discernibility_matrix(data):
-    """Tạo ma trận phân biệt."""
-    n = len(data)
-    attributes = list(data.columns[:-1])  # Loại bỏ cột quyết định
-    matrix = [[set() for _ in range(n)] for _ in range(n)]
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            diff_attributes = {
-                attr
-                for attr in attributes
-                if data.iloc[i][attr] != data.iloc[j][attr]
-            }
-            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
-                matrix[i][j] = diff_attributes
-    return matrix
-
-# Rút gọn hàm phân biệt
-def reducts_from_matrix(matrix, attributes):
-    """Tìm reducts từ ma trận phân biệt."""
-    formulas = set()
-    for row in matrix:
-        for cell in row:
-            if cell:
-                formulas.add(tuple(sorted(cell)))
-
-    # Tạo tập rút gọn
-    reducts = []
-    for size in range(1, len(attributes) + 1):
-        for combination in generate_combinations(attributes, size):
-            if all(any(set(combination) >= set(term) for term in formulas) for term in formulas):
-                reducts.append(set(combination))
-    return reducts
-
 # Sinh luật với độ chính xác 100%
 def generate_rules(data, reduct):
     """Sinh các luật dựa trên reduct."""
@@ -793,7 +962,7 @@ def upper_approximation(data, target_set, ind_relation):
     """Calculate upper approximation of a target set."""
     upper = []
     for subset in ind_relation:
-        if set(subset) & target_set:
+        if set(subset) & set(target_set):
             upper.extend(subset)
     return upper
 
@@ -801,58 +970,141 @@ def rough_accuracy(lower, upper):
     """Calculate the accuracy of a rough set."""
     return len(lower) / len(upper) if len(upper) > 0 else 0
 
-@app.route('/combined', methods=['POST'])
-def combined():
+def discernibility_matrix(data):
+    """Tạo ma trận phân biệt."""
+    n = len(data)
+    attributes = list(data.columns[1:-1])  # Loại bỏ cột quyết định
+    matrix = [[set() for _ in range(n)] for _ in range(n)]
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            diff_attributes = {
+                attr
+                for attr in attributes
+                if data.iloc[i][attr] != data.iloc[j][attr]
+            }
+            if data.iloc[i][-1] != data.iloc[j][-1]:  # Chỉ xét cặp khác giá trị quyết định
+                matrix[i][j] = diff_attributes
+    return matrix
+
+def get_discernibility_conditions(matrix):
+    """Trích xuất tất cả các điều kiện phân biệt từ ma trận."""
+    conditions = set()
+    for row in matrix:
+        for cell in row:
+            if cell:  # Chỉ lưu các tập khác rỗng
+                conditions.add(frozenset(cell))
+    return list(conditions)
+
+def reducts_from_conditions(attributes, conditions):
+    """Tính reduct nhỏ nhất từ các điều kiện phân biệt."""
+    min_reduct_size = len(attributes)  # Kích thước reduct nhỏ nhất
+    reducts = []
+
+    def satisfies_condition(subset):
+        subset_set = set(subset)
+        return all(
+            any(term.issubset(subset_set) for term in conditions)
+            for term in conditions
+        )
+
+    for size in range(1, len(attributes) + 1):
+        for subset in generate_all_combinations(attributes):
+            if len(subset) == size and satisfies_condition(subset):
+                if size < min_reduct_size:
+                    reducts = [set(subset)]
+                    min_reduct_size = size
+                elif size == min_reduct_size:
+                    reducts.append(set(subset))
+        if reducts:  # Kết thúc ngay khi tìm thấy reduct nhỏ nhất
+            break
+
+    return reducts
+
+def generate_all_combinations(attributes):
+    """Sinh tất cả các tổ hợp thuộc tính."""
+    combinations = []
+
+    def combine(current, start):
+        if current:
+            combinations.append(current)
+        for i in range(start, len(attributes)):
+            combine(current + [attributes[i]], i + 1)
+
+    combine([], 0)
+    return combinations
+
+
+@app.route('/rough-set', methods=['POST'])
+def rough_set():
     try:
-        # Kiểm tra và xác thực dữ liệu JSON đầu vào
-        data = request.json
-        if 'dataset' not in data or not isinstance(data['dataset'], list):
-            return jsonify({'error': "Invalid or missing 'dataset' in the request."}), 400
+        # Kiểm tra xem file có được tải lên không
+        if 'file' not in request.files:
+            return jsonify({'error': "No file uploaded."}), 400
 
-        dataset = pd.DataFrame(data['dataset'])
-        target = set(data.get('target', []))
-        attributes = data.get('attributes', list(dataset.columns[:-1]))
+        file = request.files['file']
+        if not file.filename.endswith('.csv'):
+            return jsonify({'error': "Invalid file type. Please upload a CSV file."}), 400
 
-        # Kiểm tra các thuộc tính có tồn tại trong dataset
-        missing_attributes = [attr for attr in attributes if attr not in dataset.columns]
-        if missing_attributes:
-            return jsonify({'error': f"Missing attributes in dataset: {missing_attributes}"}), 400
+        # Đọc file CSV thành DataFrame
+        dataset = pd.read_csv(file)
+        attributes = list(dataset.columns[1:-1])  # Bỏ qua cột đầu tiên và cột quyết định
+        target_class_combinations = generate_all_combinations(attributes)
 
-        # Rough Set calculations
-        ind_relation = indiscernibility_relation(dataset, attributes)
-        lower = lower_approximation(dataset, target, ind_relation) if target else []
-        upper = upper_approximation(dataset, target, ind_relation) if target else []
-        accuracy = rough_accuracy(lower, upper) if target else None
+        # Tính toán tập thô
+        rough_set_results = {}
 
-        # Discernibility Matrix and Reducts
+        for comb in target_class_combinations:
+            ind_relation = indiscernibility_relation(dataset, comb)
+            lower = {}
+            upper = {}
+            accuracy = {}
+
+            # Lấy các lớp quyết định
+            decision_classes = dataset[dataset.columns[-1]].unique()
+
+            for cls in decision_classes:
+                # Chuyển cls thành chuỗi để tránh lỗi so sánh
+                target_set = dataset.index[
+                    dataset[dataset.columns[-1]] == str(cls)  # cls phải phù hợp với giá trị trong cột quyết định
+                ].tolist()
+
+                # Tính toán lower và upper approximation
+                lower[str(cls)] = lower_approximation(dataset, target_set, ind_relation)
+                upper[str(cls)] = upper_approximation(dataset, target_set, ind_relation)
+
+                # Tính accuracy
+                accuracy[str(cls)] = rough_accuracy(lower[str(cls)], upper[str(cls)])
+
+            rough_set_results[str(comb)] = {
+                "lower_approximation": lower,
+                "upper_approximation": upper,
+                "accuracy": accuracy,
+            }
+
+        # Tính reducts và sinh luật
         matrix = discernibility_matrix(dataset)
-        reducts = reducts_from_matrix(matrix, attributes)
+        conditions = get_discernibility_conditions(matrix)
+        reducts = reducts_from_conditions(attributes, conditions)
         all_rules = {}
         for reduct in reducts:
             rules = generate_rules(dataset, reduct)
             all_rules[f"Reduct {list(reduct)}"] = rules
 
+        # Trả về kết quả
         return jsonify({
-            'rough_set': {
-                'indiscernibility_relation': ind_relation,
-                'lower_approximation': lower,
-                'upper_approximation': upper,
-                'accuracy': accuracy
-            },
-            'discernibility': {
-                'discernibility_matrix': "Matrix too large to display" if len(matrix) > 100 else matrix,
+            'rough_set': rough_set_results,
+            'reducts_and_rules': {
                 'reducts': [list(reduct) for reduct in reducts],
                 'rules': all_rules
             }
         })
 
-    except KeyError as e:
-        return jsonify({'error': f"Missing key: {str(e)}"}), 400
-    except ValueError as e:
-        return jsonify({'error': f"Value error: {str(e)}"}), 400
     except Exception as e:
         return jsonify({'error': f"An unexpected error occurred: {str(e)}"}), 500
 
+
+    
 @app.errorhandler(404)
 def page_not_found(e):
     logging.warning("404 error: %s", str(e))
