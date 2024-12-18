@@ -749,7 +749,7 @@ def association_rules():
         return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
 
     # Get parameters from user input
-     try:
+    try:
         min_support = float(request.form.get('min_support', 0.5))
         min_confidence = float(request.form.get('min_confidence', 0.7))
         logging.info("Parameters received: min_support=%f, min_confidence=%f", min_support, min_confidence)
@@ -788,8 +788,10 @@ def association_rules():
     
     # Return results
     return jsonify(result)
-#-----------------------------do tuong quan--------------------------------
-    def read_csv(file_path):
+
+#-----------------------------ĐỘ TƯƠNG QUAN--------------------------------
+
+def read_csv(file_path):
     """
     Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
     Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
