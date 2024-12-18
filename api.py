@@ -1,6 +1,9 @@
+import base64
 import csv
+from io import BytesIO
 from flask import Flask, jsonify, request,send_from_directory
 from flask_cors import CORS
+from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 import os
@@ -330,7 +333,6 @@ def run_clustering():
     return jsonify(result)
 
 # -------------------------------------------NAIVE BAYES----------------------------------------------
-
 class NaiveBayesClassifier:
     def __init__(self, smoothing=False):
         self.classes = None
@@ -342,111 +344,73 @@ class NaiveBayesClassifier:
         self.classes = np.unique(y)
         n_samples, n_features = X.shape
 
-        # Tính xác suất của mỗi lớp
-        self.class_probs = {}
-        step_details = {'class_probs': {}, 'feature_probs': {}}
-        for cls in self.classes:
-            self.class_probs[cls] = np.sum(y == cls) / n_samples
-            step_details['class_probs'][cls] = self.class_probs[cls]
-
-        # Tính xác suất của các đặc trưng cho mỗi lớp
+        self.class_probs = {cls: np.sum(y == cls) / n_samples for cls in self.classes}
         self.feature_probs = {}
+
         for cls in self.classes:
             X_cls = X[y == cls]
-            cls_feature_probs = []
-            feature_details = []
-
+            self.feature_probs[cls] = []
             for feature_idx in range(n_features):
                 feature_values = X_cls[:, feature_idx]
                 unique_values = np.unique(feature_values)
-
-                value_probs = {}
-                value_details = {}
-                for val in unique_values:
-                    if self.smoothing:
-                        count = np.sum((feature_values == val)) + 1
-                        total = len(feature_values) + len(unique_values)
-                    else:
-                        count = np.sum((feature_values == val))
-                        total = len(feature_values)
-
-                    prob = count / total
-                    value_probs[val] = prob
-                    value_details[val] = {'count': count, 'total': total, 'prob': prob}
-
-                cls_feature_probs.append(value_probs)
-                feature_details.append(value_details)
-
-            self.feature_probs[cls] = cls_feature_probs
-            step_details['feature_probs'][cls] = feature_details
-
-        return step_details
+                value_probs = {
+                    val: (np.sum(feature_values == val) + (1 if self.smoothing else 0)) /
+                         (len(feature_values) + (len(unique_values) if self.smoothing else 0))
+                    for val in unique_values
+                }
+                self.feature_probs[cls].append(value_probs)
 
     def predict(self, X):
         predictions = []
-        prediction_details = []
         for sample in X:
-            class_scores = {}
-            sample_details = {'features': sample.tolist(), 'scores': {}}
-
-            for cls in self.classes:
-                score = math.log(self.class_probs[cls])
-                for feature_idx, feature_val in enumerate(sample):
-                    feature_prob = self.feature_probs[cls][feature_idx].get(feature_val, 1e-10)
-                    score += math.log(feature_prob)
-
-                class_scores[cls] = score
-                sample_details['scores'][cls] = score
-
+            class_scores = {
+                cls: math.log(self.class_probs[cls]) + sum(
+                    math.log(self.feature_probs[cls][feature_idx].get(feature_val, 1e-10))
+                    for feature_idx, feature_val in enumerate(sample)
+                )
+                for cls in self.classes
+            }
             predictions.append(max(class_scores, key=class_scores.get))
-            prediction_details.append(sample_details)
-
-        return np.array(predictions), prediction_details
+        return np.array(predictions)
 
 def calculate_confusion_matrix(y_true, y_pred, classes):
-    """Tính ma trận nhầm lẫn"""
     confusion_matrix = np.zeros((len(classes), len(classes)), dtype=int)
     class_to_index = {cls: idx for idx, cls in enumerate(classes)}
-    
     for true, pred in zip(y_true, y_pred):
-        true_idx = class_to_index[true]
-        pred_idx = class_to_index[pred]
-        confusion_matrix[true_idx, pred_idx] += 1
-    
-    return confusion_matrix.tolist()
+        confusion_matrix[class_to_index[true], class_to_index[pred]] += 1
+    return confusion_matrix
 
 def calculate_precision_recall_f1(confusion_matrix, classes):
-    """Tính precision, recall, và F1-score cho từng lớp"""
     metrics = {}
     for i, cls in enumerate(classes):
-        # True Positive
-        tp = confusion_matrix[i][i]
-        
-        # False Positive (tổng cột trừ TP)
-        fp = sum(confusion_matrix[j][i] for j in range(len(classes)) if j != i)
-        
-        # False Negative (tổng hàng trừ TP)
-        fn = sum(confusion_matrix[i][j] for j in range(len(classes)) if j != i)
-        
-        # Precision
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        
-        # Recall
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        
-        # F1-score
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        
-        metrics[cls] = {
-            'precision': precision,
-            'recall': recall,
-            'f1_score': f1
-        }
-    
+        tp = confusion_matrix[i, i]
+        fp = confusion_matrix[:, i].sum() - tp
+        fn = confusion_matrix[i, :].sum() - tp
+        precision = tp / (tp + fp) if tp + fp > 0 else 0
+        recall = tp / (tp + fn) if tp + fn > 0 else 0
+        f1_score = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0
+        metrics[cls] = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
     return metrics
 
+def plot_confusion_matrix(confusion_matrix, classes):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    cax = ax.matshow(confusion_matrix, cmap=plt.cm.Blues)
+    plt.colorbar(cax)
+    ax.set_xticks(range(len(classes)))
+    ax.set_yticks(range(len(classes)))
+    ax.set_xticklabels(classes)
+    ax.set_yticklabels(classes)
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title('Confusion Matrix')
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
 @app.route('/naive_bayes_no_smoothing', methods=['POST'])
-def naive_bayes_no_smoothing():
+def naive_bayes():
     # Kiểm tra file được upload 
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
@@ -470,45 +434,37 @@ def naive_bayes_no_smoothing():
     # Kiểm tra dữ liệu đầu vào
     if data.shape[1] < 2:
         return jsonify({"error": "Dataset must have at least 2 columns"}), 400
-    
-    # Tách dữ liệu thành đầu vào (features) và đầu ra (label)
-    X = data.iloc[:, :-1].values  # Tất cả các cột trừ cột cuối
-    y = data.iloc[:, -1].values  # Cột cuối cùng là label
 
-    # Chia dữ liệu thành tập huấn luyện và kiểm tra (70% huấn luyện, 30% kiểm tra)
-    np.random.seed(42)
-    indices = np.random.permutation(len(X))
-    split_index = int(0.7 * len(X))
-    
-    X_train, X_test = X[indices[:split_index]], X[indices[split_index:]]
-    y_train, y_test = y[indices[:split_index]], y[indices[split_index:]]
+    # Parse input data
+    X = np.array(data['X'])
+    y = np.array(data['y'])
+    X_test = np.array(data['X_test'])
+    smoothing = data.get('smoothing', False)
 
-    # Thuật toán Naive Bayes không làm trơn Laplace
-    nb_classifier = NaiveBayesClassifier(smoothing=False)
-    fit_details = nb_classifier.fit(X_train, y_train)
-    y_pred, predict_details = nb_classifier.predict(X_test)
-    
-    # Tính toán các độ đo
-    classes = np.unique(y)
-    confusion_matrix = calculate_confusion_matrix(y_test, y_pred, classes)
+    # Initialize and train the classifier
+    classifier = NaiveBayesClassifier(smoothing=smoothing)
+    classifier.fit(X, y)
+
+    # Predict the test set
+    y_pred = classifier.predict(X_test)
+
+    # Calculate confusion matrix and metrics
+    classes = classifier.classes
+    confusion_matrix = calculate_confusion_matrix(y, y_pred, classes)
     metrics = calculate_precision_recall_f1(confusion_matrix, classes)
-    
-    # Tính độ chính xác tổng thể
-    accuracy = np.mean(y_test == y_pred)
 
-    # Trả về kết quả
-    result = {
-        "accuracy": accuracy,
-        "confusion_matrix": confusion_matrix,
-        "class_metrics": metrics,
-        "fit_details": fit_details,
-        "predict_details": predict_details,
-        "classes": classes.tolist()
-    }
-    return jsonify(result)
+    # Generate confusion matrix plot as base64 string
+    confusion_matrix_img = plot_confusion_matrix(confusion_matrix, classes)
+
+    return jsonify({
+        'y_pred': y_pred.tolist(),
+        'confusion_matrix': confusion_matrix.tolist(),
+        'metrics': metrics,
+        'confusion_matrix_plot': confusion_matrix_img
+    })
 
 @app.route('/naive_bayes_with_smoothing', methods=['POST'])
-def naive_bayes_with_smoothing():
+def naive_bayes_laplace():
     # Kiểm tra file được upload 
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
@@ -533,41 +489,32 @@ def naive_bayes_with_smoothing():
     if data.shape[1] < 2:
         return jsonify({"error": "Dataset must have at least 2 columns"}), 400
     
-    # Tách dữ liệu thành đầu vào (features) và đầu ra (label)
-    X = data.iloc[:, :-1].values  # Tất cả các cột trừ cột cuối
-    y = data.iloc[:, -1].values  # Cột cuối cùng là label
+    # Parse input data
+    X = np.array(data['X'])
+    y = np.array(data['y'])
+    X_test = np.array(data['X_test'])
 
-    # Chia dữ liệu thành tập huấn luyện và kiểm tra (70% huấn luyện, 30% kiểm tra)
-    np.random.seed(42)
-    indices = np.random.permutation(len(X))
-    split_index = int(0.7 * len(X))
-    
-    X_train, X_test = X[indices[:split_index]], X[indices[split_index:]]
-    y_train, y_test = y[indices[:split_index]], y[indices[split_index:]]
+    # Initialize and train the classifier with Laplace smoothing
+    classifier = NaiveBayesClassifier(smoothing=True)
+    classifier.fit(X, y)
 
-    # Thuật toán Naive Bayes có làm trơn Laplace
-    nb_classifier = NaiveBayesClassifier(smoothing=True)
-    fit_details = nb_classifier.fit(X_train, y_train)
-    y_pred, predict_details = nb_classifier.predict(X_test)
-    
-    # Tính toán các độ đo
-    classes = np.unique(y)
-    confusion_matrix = calculate_confusion_matrix(y_test, y_pred, classes)
+    # Predict the test set
+    y_pred = classifier.predict(X_test)
+
+    # Calculate confusion matrix and metrics
+    classes = classifier.classes
+    confusion_matrix = calculate_confusion_matrix(y, y_pred, classes)
     metrics = calculate_precision_recall_f1(confusion_matrix, classes)
-    
-    # Tính độ chính xác tổng thể
-    accuracy = np.mean(y_test == y_pred)
 
-    # Trả về kết quả
-    result = {
-        "accuracy": accuracy,
-        "confusion_matrix": confusion_matrix,
-        "class_metrics": metrics,
-        "fit_details": fit_details,
-        "predict_details": predict_details,
-        "classes": classes.tolist()
-    }
-    return jsonify(result)
+    # Generate confusion matrix plot as base64 string
+    confusion_matrix_img = plot_confusion_matrix(confusion_matrix, classes)
+
+    return jsonify({
+        'y_pred': y_pred.tolist(),
+        'confusion_matrix': confusion_matrix.tolist(),
+        'metrics': metrics,
+        'confusion_matrix_plot': confusion_matrix_img
+    })
 
 #------------------------------tap pho bien -----------------------
 # Function to calculate support
