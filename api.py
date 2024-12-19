@@ -785,29 +785,31 @@ def interpret_correlation(r):
     else:
         return "Mối quan hệ giữa hai biến không rõ ràng."
 
-app = Flask(__name__)
-
 @app.route('/pearson_correlation', methods=['POST'])
-def calculate_pearson():
+def pearson_correlation_handler():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if not file.filename.endswith('.csv'):
+        return jsonify({"error": "Invalid file format, please upload a CSV file"}), 400
+
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+    file.save(file_path)
+
     try:
-        data = request.json
-        x = data.get('x')
-        y = data.get('y')
-
-        if not isinstance(x, list) or not isinstance(y, list):
-            return jsonify({"error": "x và y phải là danh sách số liệu."}), 400
-
-        if len(x) != len(y):
-            return jsonify({"error": "Hai danh sách x và y phải có cùng độ dài."}), 400
+        data = pd.read_csv(file_path)
+        x = data.iloc[:, 0].tolist()
+        y = data.iloc[:, 1].tolist()
 
         r = pearson_correlation(x, y)
-        result = {
-            "pearson_coefficient": round(r, 4),
-            "interpretation": interpret_correlation(r)
-        }
-        return jsonify(result)
+        interpretation = interpret_correlation(r)
+
+        return jsonify({"pearson_correlation": r, "interpretation": interpretation})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500    
+        return jsonify({"error": str(e)}), 500
+    finally:
+        os.remove(file_path)   
 
 #----------------------------- Tập thô (reduct)-----------------------------
 # Sinh luật với độ chính xác 100%
