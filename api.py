@@ -737,23 +737,6 @@ def association_rules():
     return jsonify(result)
 
 #-----------------------------ĐỘ TƯƠNG QUAN--------------------------------
-    
-def read_csv(file_path):
-        """
-        Đọc dữ liệu từ tệp CSV và chuyển thành các danh sách số liệu.
-        Giả sử tệp có hai cột dữ liệu, không tính dòng tiêu đề.
-        """
-        x = []
-        y = []
-        with open(file_path, mode='r', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            next(reader)  # Bỏ qua dòng tiêu đề, nếu có
-            for row in reader:
-                if len(row) >= 2:  # Đảm bảo có ít nhất 2 cột
-                    x.append(float(row[0].strip()))
-                    y.append(float(row[1].strip()))
-        return x, y
-
 def mean(values):
     """Tính giá trị trung bình."""
     return sum(values) / len(values)
@@ -765,20 +748,20 @@ def pearson_correlation(x, y):
     """
     if len(x) != len(y):
         raise ValueError("Hai danh sách x và y phải có cùng độ dài.")
-
+    
     n = len(x)
     mean_x = mean(x)
     mean_y = mean(y)
-
+    
     # Tính các thành phần của công thức
     numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
     denominator_x = sum((x[i] - mean_x) ** 2 for i in range(n))
     denominator_y = sum((y[i] - mean_y) ** 2 for i in range(n))
     denominator = (denominator_x * denominator_y) ** 0.5
-
+    
     if denominator == 0:
         return 0  # Trường hợp đặc biệt: nếu biến x hoặc y không thay đổi.
-
+    
     return numerator / denominator
 
 def interpret_correlation(r):
@@ -802,52 +785,30 @@ def interpret_correlation(r):
     else:
         return "Mối quan hệ giữa hai biến không rõ ràng."
 
+app = Flask(__name__)
+
 @app.route('/pearson_correlation', methods=['POST'])
-def calculate_correlation():
-    logging.info("Received request at /pearson_correlation")
-
-    if 'file' not in request.files:
-        logging.warning("No file part in the request")
-        return jsonify({"error": "No file part"}), 400
-
-    file = request.files['file']
-
-    if not file.filename.endswith('.csv'):
-        logging.warning("Invalid file format: %s", file.filename)
-        return jsonify({"error": "Invalid file format, please input a .csv file"}), 400
-
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+def calculate_pearson():
     try:
-        file.save(file_path)
-        logging.info("File saved successfully at %s", file_path)
-    except Exception as e:
-        logging.error("Failed to save file: %s", str(e))
-        return jsonify({"error": f"Failed to save file: {str(e)}"}), 500
+        data = request.json
+        x = data.get('x')
+        y = data.get('y')
 
-    try:
-        # Đọc dữ liệu từ CSV file
-        x, y = read_csv(file_path)
-        logging.info("File processed successfully")
-    except Exception as e:
-        logging.error("Failed to read or process file: %s", str(e))
-        return jsonify({"error": f"Failed to read file: {str(e)}"}), 400
+        if not isinstance(x, list) or not isinstance(y, list):
+            return jsonify({"error": "x và y phải là danh sách số liệu."}), 400
 
-    try:
-        # Tính toán hệ số tương quan Pearson
+        if len(x) != len(y):
+            return jsonify({"error": "Hai danh sách x và y phải có cùng độ dài."}), 400
+
         r = pearson_correlation(x, y)
-        conclusion = interpret_correlation(r)
-        logging.info("Pearson correlation calculated successfully")
+        result = {
+            "pearson_coefficient": round(r, 4),
+            "interpretation": interpret_correlation(r)
+        }
+        return jsonify(result)
     except Exception as e:
-        logging.error("Error during correlation calculation: %s", str(e))
-        return jsonify({"error": f"Error calculating correlation: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500    
 
-    result = {
-        "pearson_correlation": r,
-        "interpretation": conclusion
-    }
-    logging.info("Results generated successfully")
-
-    return jsonify(result)
 #----------------------------- Tập thô (reduct)-----------------------------
 # Sinh luật với độ chính xác 100%
 def generate_rules_rough_set(data, reduct):
