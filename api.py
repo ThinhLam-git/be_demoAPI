@@ -784,7 +784,6 @@ def interpret_correlation(r):
         return "Hai biến có rất ít hoặc không có mối quan hệ tuyến tính."
     else:
         return "Mối quan hệ giữa hai biến không rõ ràng."
-
 @app.route('/pearson_correlation', methods=['POST'])
 def pearson_correlation_handler():
     if 'file' not in request.files:
@@ -794,11 +793,15 @@ def pearson_correlation_handler():
     if not file.filename.endswith('.csv'):
         return jsonify({"error": "Invalid file format, please upload a CSV file"}), 400
 
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-    file.save(file_path)
-
     try:
-        data = pd.read_csv(file_path)
+        # Debugging: In ra dữ liệu đọc được từ file CSV
+        data = pd.read_csv(file)
+        print("Data read from CSV file:")
+        print(data.head())  # In ra 5 dòng đầu tiên của dữ liệu
+        
+        if data.shape[1] < 2:
+            return jsonify({"error": "CSV file must have at least two columns"}), 400
+
         x = data.iloc[:, 0].tolist()
         y = data.iloc[:, 1].tolist()
 
@@ -807,9 +810,9 @@ def pearson_correlation_handler():
 
         return jsonify({"pearson_correlation": r, "interpretation": interpretation})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        os.remove(file_path)   
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
+       
 
 #----------------------------- Tập thô (reduct)-----------------------------
 # Sinh luật với độ chính xác 100%
